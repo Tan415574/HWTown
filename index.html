@@ -42,8 +42,7 @@ window._HWT = {
   tasks: [], job: null,
   bonusDone: {}, timers: {},
   todayBonus: false,
-  unsubs: [],
-  creatingChild: false   // blocks onAuthStateChanged during child account creation
+  unsubs: []
 };
 
 /* ═══════════════════════════════════════
@@ -56,12 +55,10 @@ window.goTo = function(id) {
 };
 
 /* ═══════════════════════════════════════
-   AUTH STATE
+   AUTH STATE — parents only
 ═══════════════════════════════════════ */
 onAuthStateChanged(auth, async (user) => {
   hideLoader();
-  // Don't interfere while we're in the middle of creating a child account
-  if (_HWT.creatingChild) return;
   if (!user) { _HWT.user = null; _HWT.role = null; goTo('s-splash'); return; }
   _HWT.user = user;
   try {
@@ -70,16 +67,9 @@ onAuthStateChanged(auth, async (user) => {
       _HWT.role = 'parent';
       _HWT.parentData = { id: user.uid, ...pSnap.data() };
       openParentDash();
-      return;
+    } else {
+      await signOut(auth);
     }
-    const cSnap = await getDoc(doc(db, 'children', user.uid));
-    if (cSnap.exists()) {
-      _HWT.role = 'child';
-      _HWT.childData = { id: user.uid, ...cSnap.data() };
-      launchGame();
-      return;
-    }
-    await signOut(auth);
   } catch(e) {
     console.error(e);
     await signOut(auth);
@@ -137,7 +127,8 @@ window.parentLogout = async function() {
 };
 
 /* ═══════════════════════════════════════
-   ADD CHILD
+   ADD CHILD — stored in Firestore only
+   No Firebase Auth for children at all
 ═══════════════════════════════════════ */
 window.addChild = async function() {
   const name  = v('ac-name').trim();
@@ -150,57 +141,47 @@ window.addChild = async function() {
   if (!name || !age || !uname || !pass) { showErr('ac-err', 'Please fill in all fields.'); return; }
   if (pass !== pass2)  { showErr('ac-err', 'Passwords do not match.'); return; }
   if (pass.length < 4) { showErr('ac-err', 'Password must be at least 4 characters.'); return; }
-  if (!/^[a-z0-9_]+$/.test(uname)) { showErr('ac-err', 'Username can only have letters, numbers and underscore.'); return; }
+  if (!/^[a-z0-9_]+$/.test(uname)) { showErr('ac-err', 'Username: letters, numbers and _ only.'); return; }
   setBtnLoad('ac-btn', true, 'Adding child…');
-
-  const parentUid = _HWT.user.uid;
-  const fakeEmail = uname + '@hwtchild.local';
-
-  // Block onAuthStateChanged from redirecting while we create the child
-  _HWT.creatingChild = true;
-
   try {
-    // Create the child Firebase Auth account
-    // If username is taken, Firebase will throw 'email-already-in-use'
-    const cred = await createUserWithEmailAndPassword(auth, fakeEmail, pass);
-
-    // Save child data to Firestore
-    await setDoc(doc(db, 'children', cred.user.uid), {
-      parentId: parentUid, name, age, avatar: av, username: uname,
+    // Save child directly to Firestore — no Firebase Auth needed
+    const childRef = doc(collection(db, 'children'));
+    await setDoc(childRef, {
+      parentId: _HWT.user.uid,
+      name, age, avatar: av,
+      username: uname,
+      password: pass,   // stored in Firestore, not Firebase Auth
       coins: 0, day: 1,
       houseItems: ['bed'], ownedItems: ['bed'],
       pet: null, petHappiness: 3,
       todayJob: null, todayDone: false,
       createdAt: serverTimestamp()
     });
-
-    // Show success screen
-    _HWT.creatingChild = false;
+    // Show success — parent stays logged in the whole time
     document.getElementById('ac-success-name').textContent = av + ' ' + name;
     document.getElementById('ac-success-user').textContent = uname;
     setBtnLoad('ac-btn', false, 'Add Child');
+    // Clear the form
+    ['ac-name','ac-user','ac-pass','ac-pass2'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    document.getElementById('ac-age').value = '';
     goTo('s-child-added');
-
   } catch(e) {
-    _HWT.creatingChild = false;
+    console.error(e);
+    showErr('ac-err', 'Something went wrong: ' + e.message);
     setBtnLoad('ac-btn', false, 'Add Child');
-    if (e.code === 'auth/email-already-in-use') {
-      showErr('ac-err', 'That username is already taken. Please choose another.');
-    } else {
-      showErr('ac-err', friendlyAuthErr(e.code));
-    }
   }
 };
 
 window.goToParentFromSuccess = async function() {
-  // Sign out the child account that was auto-created, send parent to login
-  await signOut(auth);
-  goTo('s-p-login');
-  toast('Please sign back in to your parent account.');
+  goTo('s-parent');
+  await setTab('children');
 };
 
 /* ═══════════════════════════════════════
-   CHILD AUTH
+   CHILD LOGIN — Firestore lookup only
 ═══════════════════════════════════════ */
 window.childLogin = async function() {
   const uname = v('cl-user').trim().toLowerCase();
@@ -209,11 +190,29 @@ window.childLogin = async function() {
   if (!uname || !pass) { showErr('cl-err', 'Enter your username and password.'); return; }
   setBtnLoad('cl-btn', true, 'Loading…');
   try {
-    const fakeEmail = uname + '@hwtchild.local';
-    await signInWithEmailAndPassword(auth, fakeEmail, pass);
-    // onAuthStateChanged handles the rest
+    // Look up child by username in Firestore
+    const q = query(collection(db, 'children'), where('username', '==', uname));
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      showErr('cl-err', 'Username not found — ask your parent to check it.');
+      setBtnLoad('cl-btn', false, "Let's Play! 🚀");
+      return;
+    }
+    const childDoc = snap.docs[0];
+    const childData = childDoc.data();
+    // Check password
+    if (childData.password !== pass) {
+      showErr('cl-err', 'Wrong password — try again!');
+      setBtnLoad('cl-btn', false, "Let's Play! 🚀");
+      return;
+    }
+    // Logged in — launch game
+    _HWT.role = 'child';
+    _HWT.childData = { id: childDoc.id, ...childData };
+    launchGame();
   } catch(e) {
-    showErr('cl-err', 'Wrong username or password — try again!');
+    console.error(e);
+    showErr('cl-err', 'Something went wrong. Try again!');
     setBtnLoad('cl-btn', false, "Let's Play! 🚀");
   }
 };
@@ -221,7 +220,7 @@ window.childLogin = async function() {
 window.childLogout = async function() {
   clearUnsubs(); stopTimers();
   _HWT.childData = null; _HWT.job = null; _HWT.tasks = [];
-  await signOut(auth);
+  goTo('s-splash');
 };
 
 /* ═══════════════════════════════════════
