@@ -147,8 +147,8 @@ window.addChild = async function() {
     const uSnap = await getDocs(uq);
     if (!uSnap.empty) { showErr('ac-err', 'That username is taken. Try another.'); setBtnLoad('ac-btn', false, 'Add Child'); return; }
 
-    const parentUid   = _HWT.user.uid;
-    const parentEmail = _HWT.parentData.email;
+    // Store parent uid before creating child account
+    const parentUid = _HWT.user.uid;
 
     // Create child Firebase account
     const fakeEmail = uname + '@hwtchild.local';
@@ -162,11 +162,20 @@ window.addChild = async function() {
       createdAt: serverTimestamp()
     });
 
-    // Sign out child account — parent must re-login
+    // Sign out child account then re-sign in as parent with Google
     await signOut(auth);
-    // Show a success message on the parent login screen
-    goTo('s-p-login');
-    toast(`✅ ${av} ${name} added! Their username is: ${uname} — now sign back in as parent.`);
+    toast('✅ ' + av + ' ' + name + ' added! Signing you back in…');
+    // Small delay then re-trigger Google sign-in
+    setTimeout(async () => {
+      try {
+        const result = await signInWithPopup(auth, googleProvider);
+        // onAuthStateChanged will fire and take parent back to dashboard
+      } catch(e) {
+        // If they close the popup, just send them to login screen
+        goTo('s-p-login');
+        toast('Please sign back in with Google to continue.');
+      }
+    }, 1000);
   } catch(e) {
     showErr('ac-err', friendlyAuthErr(e.code));
     setBtnLoad('ac-btn', false, 'Add Child');
@@ -1589,7 +1598,7 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
       <div class="err-box" id="ac-err"></div>
       <button class="submit-btn btn-green" id="ac-btn" onclick="addChild()">Add Child</button>
       <p style="font-size:.75rem;color:var(--mid);margin-top:12px;font-weight:500;text-align:center;line-height:1.5;">
-        ⚠️ After adding a child, you'll be signed out and need to sign back in as the parent.
+        After adding a child, a Google popup will appear to sign you back in automatically.
       </p>
     </div>
   </div>
