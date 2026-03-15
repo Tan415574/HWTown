@@ -150,26 +150,21 @@ window.addChild = async function() {
   if (!name || !age || !uname || !pass) { showErr('ac-err', 'Please fill in all fields.'); return; }
   if (pass !== pass2)  { showErr('ac-err', 'Passwords do not match.'); return; }
   if (pass.length < 4) { showErr('ac-err', 'Password must be at least 4 characters.'); return; }
-  if (!/^[a-z0-9_]+$/.test(uname)) { showErr('ac-err', 'Username: only letters, numbers and underscore.'); return; }
+  if (!/^[a-z0-9_]+$/.test(uname)) { showErr('ac-err', 'Username can only have letters, numbers and underscore.'); return; }
   setBtnLoad('ac-btn', true, 'Adding child…');
+
+  const parentUid = _HWT.user.uid;
+  const fakeEmail = uname + '@hwtchild.local';
+
+  // Block onAuthStateChanged from redirecting while we create the child
+  _HWT.creatingChild = true;
+
   try {
-    // Check username is unique
-    const uq = query(collection(db, 'children'), where('username', '==', uname));
-    const uSnap = await getDocs(uq);
-    if (!uSnap.empty) {
-      showErr('ac-err', 'That username is taken. Try another.');
-      setBtnLoad('ac-btn', false, 'Add Child');
-      return;
-    }
-
-    const parentUid = _HWT.user.uid;
-    const fakeEmail = uname + '@hwtchild.local';
-
-    // Block onAuthStateChanged from redirecting while we create the child
-    _HWT.creatingChild = true;
-
-    // Create the child account
+    // Create the child Firebase Auth account
+    // If username is taken, Firebase will throw 'email-already-in-use'
     const cred = await createUserWithEmailAndPassword(auth, fakeEmail, pass);
+
+    // Save child data to Firestore
     await setDoc(doc(db, 'children', cred.user.uid), {
       parentId: parentUid, name, age, avatar: av, username: uname,
       coins: 0, day: 1,
@@ -179,16 +174,21 @@ window.addChild = async function() {
       createdAt: serverTimestamp()
     });
 
-    // Done — show success screen
+    // Show success screen
     _HWT.creatingChild = false;
     document.getElementById('ac-success-name').textContent = av + ' ' + name;
     document.getElementById('ac-success-user').textContent = uname;
+    setBtnLoad('ac-btn', false, 'Add Child');
     goTo('s-child-added');
 
   } catch(e) {
     _HWT.creatingChild = false;
-    showErr('ac-err', friendlyAuthErr(e.code));
     setBtnLoad('ac-btn', false, 'Add Child');
+    if (e.code === 'auth/email-already-in-use') {
+      showErr('ac-err', 'That username is already taken. Please choose another.');
+    } else {
+      showErr('ac-err', friendlyAuthErr(e.code));
+    }
   }
 };
 
