@@ -27,6 +27,7 @@ const firebaseConfig = {
   messagingSenderId: "104477598290",
   appId:             "1:104477598290:web:bef8af5b00a5070572f58b"
 };
+
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -41,7 +42,8 @@ window._HWT = {
   tasks: [], job: null,
   bonusDone: {}, timers: {},
   todayBonus: false,
-  unsubs: []
+  unsubs: [],
+  creatingChild: false   // blocks onAuthStateChanged during child account creation
 };
 
 /* ═══════════════════════════════════════
@@ -58,11 +60,10 @@ window.goTo = function(id) {
 ═══════════════════════════════════════ */
 onAuthStateChanged(auth, async (user) => {
   hideLoader();
+  // Don't interfere while we're in the middle of creating a child account
+  if (_HWT.creatingChild) return;
   if (!user) { _HWT.user = null; _HWT.role = null; goTo('s-splash'); return; }
   _HWT.user = user;
-  // If we're on the child-added success screen, don't redirect
-  const active = document.querySelector('.screen.active');
-  if (active && active.id === 's-child-added') return;
   try {
     const pSnap = await getDoc(doc(db, 'parents', user.uid));
     if (pSnap.exists()) {
@@ -164,6 +165,9 @@ window.addChild = async function() {
     const parentUid = _HWT.user.uid;
     const fakeEmail = uname + '@hwtchild.local';
 
+    // Block onAuthStateChanged from redirecting while we create the child
+    _HWT.creatingChild = true;
+
     // Create the child account
     const cred = await createUserWithEmailAndPassword(auth, fakeEmail, pass);
     await setDoc(doc(db, 'children', cred.user.uid), {
@@ -175,13 +179,14 @@ window.addChild = async function() {
       createdAt: serverTimestamp()
     });
 
-    // Show success screen — Firebase will sign in as child, that's fine
-    // We show a dedicated success page so parent knows what happened
+    // Done — show success screen
+    _HWT.creatingChild = false;
     document.getElementById('ac-success-name').textContent = av + ' ' + name;
     document.getElementById('ac-success-user').textContent = uname;
     goTo('s-child-added');
 
   } catch(e) {
+    _HWT.creatingChild = false;
     showErr('ac-err', friendlyAuthErr(e.code));
     setBtnLoad('ac-btn', false, 'Add Child');
   }
