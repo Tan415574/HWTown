@@ -1,11 +1,3 @@
-
-
-
-Here is the complete, fully fixed file all in one piece. I have repaired the syntax error so it will load perfectly, and it includes all of the immersive job themes and day-of-the-week math logic. 
-
-You can copy this entire block and replace everything in your file:
-
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -47,10 +39,10 @@ window._HWT = {
   auth, db,
   user: null, role: null,
   parentData: null, childData: null,
-  tasks:[], job: null,
+  tasks: [], job: null,
   bonusDone: {}, timers: {},
   todayBonus: false,
-  unsubs:[]
+  unsubs: []
 };
 
 /* ═══════════════════════════════════════
@@ -169,13 +161,12 @@ window.addChild = async function() {
     document.getElementById('ac-success-name').textContent = av + ' ' + name;
     document.getElementById('ac-success-user').textContent = uname;
     setBtnLoad('ac-btn', false, 'Add Child');
-    
-    // Clear the form['ac-name','ac-user','ac-pass','ac-pass2'].forEach(id => {
+    // Clear the form
+    ['ac-name','ac-user','ac-pass','ac-pass2'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
     document.getElementById('ac-age').value = '';
-    
     goTo('s-child-added');
   } catch(e) {
     console.error(e);
@@ -228,7 +219,7 @@ window.childLogin = async function() {
 
 window.childLogout = async function() {
   clearUnsubs(); stopTimers();
-  _HWT.childData = null; _HWT.job = null; _HWT.tasks =[];
+  _HWT.childData = null; _HWT.job = null; _HWT.tasks = [];
   goTo('s-splash');
 };
 
@@ -236,7 +227,7 @@ window.childLogout = async function() {
    PARENT DASHBOARD
 ═══════════════════════════════════════ */
 let _hwChild = null;
-const DAYS =['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 async function openParentDash() {
   goTo('s-parent');
@@ -261,7 +252,7 @@ window.setTab = async function(id) {
 };
 
 async function getKids() {
-  if (!_HWT.user) return[];
+  if (!_HWT.user) return [];
   const q = query(collection(db,'children'), where('parentId','==',_HWT.user.uid));
   const s = await getDocs(q);
   return s.docs.map(d => ({id:d.id,...d.data()}));
@@ -443,7 +434,7 @@ function renderChildrenTab(kids) {
 /* ═══════════════════════════════════════
    GAME
 ═══════════════════════════════════════ */
-const JOBS =[
+const JOBS = [
   {id:'explorer',  name:'Explorer',  icon:'🗺️', bg:'rgba(96,165,250,.18)',
    themes:{Reading:'Explore the Ancient Map',Maths:'Solve the Temple Puzzle',Math:'Solve the Temple Puzzle',Spelling:'Decode the Secret Message',Science:'Discover New Species',History:'Study the Scroll',Art:'Draw the Map'}},
   {id:'teacher',   name:'Teacher',   icon:'📖', bg:'rgba(255,107,107,.18)',
@@ -462,7 +453,7 @@ const JOBS =[
 
 const SICONS = {Reading:'📖',Maths:'✏️',Math:'✏️',Spelling:'🔤',Science:'🔬',History:'📜',Art:'🎨',English:'📝'};
 
-const SHOP =[
+const SHOP = [
   {id:'bed',em:'🛏️',name:'Bed',cost:0},
   {id:'desk',em:'🖥️',name:'Desk',cost:15},
   {id:'bookshelf',em:'📚',name:'Books',cost:12},
@@ -477,7 +468,7 @@ const SHOP =[
   {id:'beanbag',em:'🛋️',name:'Bean Bag',cost:22},
 ];
 
-const PETS =[
+const PETS = [
   {id:'dog',name:'Buddy',icon:'🐕',happy:'Tail wagging!',ok:'Doing okay.',sad:'Needs a walk…'},
   {id:'cat',name:'Luna',icon:'🐈',happy:'Purring loudly!',ok:'Feeling alright.',sad:'Hiding under bed…'},
   {id:'dragon',name:'Ember',icon:'🐉',happy:'Breathing happy sparks!',ok:'Smouldering gently.',sad:'Blowing grumpy smoke…'},
@@ -490,7 +481,7 @@ async function launchGame() {
   _HWT.job = c.todayJob || null;
   _HWT.bonusDone = {};
   _HWT.todayBonus = c.todayDone || false;
-  _HWT.tasks =[];
+  _HWT.tasks = [];
   updateHUD();
   // Live listener for coin updates
   const unsub = onSnapshot(doc(db,'children',c.id), snap => {
@@ -562,25 +553,22 @@ async function buildTasksPanel() {
   const job = JOBS.find(j=>j.id===_HWT.job);
   const panel = document.getElementById('ov-tasks');
 
-  // Apply the specific theme class to the panel for immersive styling
-  const gPanel = panel.querySelector('.g-panel');
-  gPanel.className = 'g-panel job-mode-' + (_HWT.job || 'default');
-  gPanel.style.background = ''; // Clear inline styles
+  // Restyle panel per job
+  panel.querySelector('.g-panel').style.background = JOB_THEMES[_HWT.job]?.panelBg || '#131c2e';
 
   document.getElementById('tp-title').innerHTML = JOB_THEMES[_HWT.job]?.panelTitle || job.icon+' '+job.name+' Day';
   document.getElementById('tp-sub').textContent = JOB_THEMES[_HWT.job]?.panelSub.replace('NAME', _HWT.childData.name) || 'Complete your missions, '+_HWT.childData.name+'!';
 
-  // Get today's homework (Matches day of the week perfectly: Monday = 0, Sunday = 6)
+  // Get today's homework — look up by parentId too since child has no auth
   const dayIdx = ((new Date().getDay())+6)%7;
   const q = query(collection(db,'homework'),
     where('childId','==',_HWT.childData.id), where('day','==',dayIdx));
   const s = await getDocs(q);
   let hw = s.docs.map(d=>({id:d.id,...d.data()}));
-  
-  // If no homework is assigned for today, use a demo fallback to keep the game playable
-  if (!hw.length) hw =[
-    {id:'d0',subject:'Reading', coins:10,minutes:10,notes:'(Demo - Ask your parent to add tasks!)'},
-    {id:'d1',subject:'Maths',   coins:15,minutes:12,notes:'(Demo task)'},
+  if (!hw.length) hw = [
+    {id:'d0',subject:'Reading', coins:10,minutes:10,notes:''},
+    {id:'d1',subject:'Maths',   coins:15,minutes:12,notes:''},
+    {id:'d2',subject:'Spelling',coins:10,minutes:8,notes:''},
   ];
 
   const todayKey = new Date().toDateString();
@@ -606,45 +594,66 @@ async function buildTasksPanel() {
   renderAllDone();
 }
 
-/* Job Titles & Subtitles */
+/* Job visual themes */
 const JOB_THEMES = {
-  explorer: { panelTitle:'🗺️ Adventure Map', panelSub:'Chart your course, NAME! Complete each mission to move forward.' },
-  teacher:  { panelTitle:'📋 The Whiteboard', panelSub:'Class is in session, NAME! Tick off each lesson.' },
-  chef:     { panelTitle:'📋 Today\'s Recipe', panelSub:'Time to cook, NAME! Complete each step to finish your dish.' },
-  scientist:{ panelTitle:'🔬 Lab Notebook', panelSub:'Experiment time, NAME! Run each test and record your results.' },
-  detective:{ panelTitle:'📌 Case Board', panelSub:'Crack the case, NAME! Connect the clues.' },
-  farmer:   { panelTitle:'🌾 The Field Today', panelSub:'Time to work the land, NAME! Tend to each crop.' },
-  vet:      { panelTitle:'📋 Patient Files', panelSub:'Clinic is open, NAME! Treat your patients.' }
+  explorer: {
+    panelBg:'linear-gradient(145deg,#0d1f35,#1a2a1a)',
+    panelTitle:'🗺️ Adventure Map',
+    panelSub:'Chart your course, NAME! Complete each mission to move forward.',
+    wrapClass:'theme-explorer',
+  },
+  teacher: {
+    panelBg:'linear-gradient(145deg,#1a1200,#2a1800)',
+    panelTitle:'📋 The Chalkboard',
+    panelSub:'Class is in session, NAME! Tick off each lesson when you\'re done.',
+    wrapClass:'theme-teacher',
+  },
+  chef: {
+    panelBg:'linear-gradient(145deg,#1a0a12,#2a0a1a)',
+    panelTitle:'📋 Today\'s Recipe',
+    panelSub:'Time to cook, NAME! Complete each step to finish your dish.',
+    wrapClass:'theme-chef',
+  },
+  scientist: {
+    panelBg:'linear-gradient(145deg,#001a1a,#001a2a)',
+    panelTitle:'🔬 Lab Notebook',
+    panelSub:'Experiment time, NAME! Run each test and record your results.',
+    wrapClass:'theme-scientist',
+  },
+  detective: {
+    panelBg:'linear-gradient(145deg,#1a1400,#0d0d0d)',
+    panelTitle:'📌 Case Board',
+    panelSub:'Crack the case, NAME! Follow every clue until the mystery is solved.',
+    wrapClass:'theme-detective',
+  },
+  farmer: {
+    panelBg:'linear-gradient(145deg,#0a1a00,#0d2a00)',
+    panelTitle:'🌾 The Field Today',
+    panelSub:'Time to work the land, NAME! Tend to each crop to complete your harvest.',
+    wrapClass:'theme-farmer',
+  },
+  vet: {
+    panelBg:'linear-gradient(145deg,#001a1a,#001020)',
+    panelTitle:'📋 Patient Files',
+    panelSub:'Clinic is open, NAME! Work through each patient to complete your shift.',
+    wrapClass:'theme-vet',
+  },
 };
 
 function renderTaskList() {
   const wrap = document.getElementById('task-list');
-  wrap.className = 'task-list';
-
-  let html = '';
-  const avatar = _HWT.childData.avatar || '👧';
-  const currentTaskIdx = _HWT.tasks.findIndex(t => !t.done); // Find the active task for the avatar to stand on
-
-  // For the Explorer, we render a special Map container
-  if (_HWT.job === 'explorer') {
-    html += `<div class="map-container"><div class="map-path-line"></div>`;
-    html += _HWT.tasks.map((t,i) => themedTaskHTML(t, i, (i === currentTaskIdx), avatar)).join('');
-    html += `</div>`;
-  } else {
-    // Normal rendering for other jobs
-    html += _HWT.tasks.map((t,i) => themedTaskHTML(t, i, false, avatar)).join('');
-  }
-
-  wrap.innerHTML = html;
+  const theme = JOB_THEMES[_HWT.job];
+  wrap.className = 'task-list ' + (theme?.wrapClass||'');
+  wrap.innerHTML = _HWT.tasks.map((t,i) => themedTaskHTML(t,i)).join('');
 }
 
-function themedTaskHTML(t, i, isCurrent, avatar) {
+function themedTaskHTML(t, i) {
   const pct = Math.round((t.total-t.left)/t.total*100);
   const timeStr = fmt(t.left);
   const canDone = t.started || t.left <= 0;
   const isActive = t.started && !t.paused;
 
-  // Shared timer controls
+  // Shared timer controls — always present
   const controls = `
     <div class="tt-controls">
       <div class="tt-timer-row">
@@ -665,36 +674,41 @@ function themedTaskHTML(t, i, isCurrent, avatar) {
   switch (_HWT.job) {
 
     case 'explorer': {
-      return `<div class="task-item map-node${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
-        <div class="map-pin"></div>
-        ${isCurrent ? `<div class="map-avatar">${avatar}</div>` : ''}
+      const steps = ['🏕️ Base Camp', '🌲 Forest Trail', '🏔️ Mountain Pass'];
+      const stepIdx = Math.min(Math.floor(pct/34), 2);
+      return `<div class="task-item ex-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
         <div class="ex-header">
+          <div class="ex-pin${t.done?' ex-pin-done':''}">${t.done?'✓':'📍'}</div>
           <div class="ex-info">
             <div class="ex-name">${t.themed}</div>
             <div class="ex-sub">${t.subject} · ${t.minutes} min${t.notes?' · '+t.notes:''}</div>
           </div>
         </div>
-        ${t.done ? `<div class="ex-stamp">📍 Location discovered! +${t.coins} coins</div>` : controls}
+        ${t.done ? `<div class="ex-stamp">📍 Location discovered! +${t.coins} coins</div>` : `
+        <div class="ex-path">
+          ${steps.map((s,si)=>`<div class="ex-step${si<=stepIdx&&isActive?' ex-step-active':''}">${s}</div>${si<2?'<div class="ex-connector">→</div>':''}`).join('')}
+          <div class="ex-step ex-step-dest">🏆</div>
+        </div>
+        ${controls}`}
       </div>`;
     }
 
     case 'teacher': {
-      return `<div class="task-item wb-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
-        <div class="wb-marker-line">
-          <span class="wb-bullet">${t.done?'✓':'☐'}</span>
-          <div style="flex:1;">
-            <div class="wb-name">${t.themed}</div>
-            <div class="wb-sub">${t.subject} · ${t.minutes} min${t.notes?' — '+t.notes:''}</div>
-            ${t.done ? '' : controls}
-          </div>
+      return `<div class="task-item ch-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="chalk-line${t.done?' chalk-done':''}">
+          <span class="chalk-bullet">${t.done?'✓':'✦'}</span>
+          <span class="chalk-text">${t.themed}</span>
+          <span class="chalk-sub">(${t.subject}${t.notes?' — '+t.notes:''})</span>
+          <span class="chalk-coins">+${t.coins}</span>
         </div>
+        ${t.done ? '' : controls}
       </div>`;
     }
 
     case 'chef': {
       return `<div class="task-item rc-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
         <div class="rc-step">
-          <div class="rc-num${t.done?' rc-done':''}">${t.done?'✓':i+1}</div>
+          <div class="rc-num${t.done?' rc-done':''}">${t.done?'✓':_HWT.tasks.indexOf(t)+1}</div>
           <div class="rc-body">
             <div class="rc-name">${t.themed}</div>
             <div class="rc-sub">${t.subject}${t.notes?' · '+t.notes:''} · ${t.minutes} min</div>
@@ -725,7 +739,7 @@ function themedTaskHTML(t, i, isCurrent, avatar) {
         <div class="det-pin"></div>
         <div class="det-card">
           <div class="det-header">
-            <span class="det-label">CLUE #${i+1}</span>
+            <span class="det-label">CLUE #${_HWT.tasks.indexOf(t)+1}</span>
             ${t.done?'<span class="det-solved">SOLVED ✓</span>':'<span class="det-open">OPEN</span>'}
           </div>
           <div class="det-name">${t.themed}</div>
@@ -805,6 +819,12 @@ window.startTask = function(i) {
       // Update scientist tube live
       const sciLiq = document.querySelector(`#tc${i} .sci-liquid`);
       if (sciLiq) sciLiq.style.height = pct+'%';
+      // Update explorer path steps
+      if (_HWT.job === 'explorer') {
+        const stepIdx = Math.min(Math.floor(pct/34), 2);
+        const steps = document.querySelectorAll(`#tc${i} .ex-step`);
+        steps.forEach((s,si) => { if(si<=stepIdx) s.classList.add('ex-step-active'); });
+      }
       // Update farmer crop icon
       if (_HWT.job === 'farmer') {
         const cropEl = document.querySelector(`#tc${i} .farm-crop`);
@@ -1484,7 +1504,7 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 @keyframes ovIn{from{opacity:0;}to{opacity:1;}}
 .g-panel{background:#131c2e;border:1px solid rgba(255,255,255,.08);border-radius:var(--r-xl);padding:24px;max-width:660px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 28px 72px rgba(0,0,0,.55);animation:panelPop .28s cubic-bezier(.34,1.2,.64,1) both;position:relative;}
 @keyframes panelPop{from{transform:scale(.91) translateY(18px);opacity:0;}to{transform:scale(1) translateY(0);opacity:1;}}
-.g-close{position:absolute;top:12px;right:12px;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.07);border:none;color:rgba(255,255,255,.45);font-size:.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .18s;z-index:100;}
+.g-close{position:absolute;top:12px;right:12px;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.07);border:none;color:rgba(255,255,255,.45);font-size:.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .18s;}
 .g-close:hover{background:rgba(255,255,255,.13);color:white;}
 .g-ptitle{font-family:var(--fd);font-size:1.35rem;font-weight:800;color:white;margin-bottom:3px;}
 .g-psub{font-size:.8rem;color:rgba(255,255,255,.38);font-weight:500;margin-bottom:18px;}
@@ -1581,121 +1601,104 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 .tt-btns{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .tt-coins{font-size:.78rem;font-weight:800;color:#FFD93D;margin-left:auto;}
 
+/* ═══ EXPLORER THEME ═══ */
+.theme-explorer .task-item{border-color:rgba(96,165,250,.2);background:rgba(0,20,40,.4);}
+.theme-explorer .task-item.t-active{border-color:#60A5FA;background:rgba(96,165,250,.1);}
+.theme-explorer .task-item.t-done{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.07);}
+.ex-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.ex-pin{width:32px;height:32px;border-radius:50%;background:rgba(96,165,250,.15);border:2px solid rgba(96,165,250,.3);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;transition:all .3s;}
+.ex-pin-done{background:rgba(52,211,153,.2);border-color:#10B981;color:#10B981;font-weight:800;}
+.ex-info{flex:1;}
+.ex-name{font-weight:800;font-size:.92rem;color:white;}
+.ex-sub{font-size:.72rem;color:rgba(255,255,255,.45);margin-top:2px;}
+.ex-path{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:rgba(0,0,0,.2);border-radius:var(--r);border:1px solid rgba(96,165,250,.1);}
+.ex-step{font-size:.7rem;font-weight:700;color:rgba(255,255,255,.3);padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.08);transition:all .4s;}
+.ex-step-active{color:#60A5FA;border-color:#60A5FA;background:rgba(96,165,250,.15);}
+.ex-step-dest{color:rgba(255,255,255,.2);}
+.ex-connector{color:rgba(255,255,255,.2);font-size:.8rem;}
+.ex-stamp{font-size:.82rem;font-weight:700;color:#10B981;padding:8px 12px;background:rgba(16,185,129,.08);border-radius:var(--r);border:1px solid rgba(16,185,129,.2);}
+
+/* ═══ TEACHER / CHALKBOARD THEME ═══ */
+.theme-teacher .g-panel{font-family:'Courier New',monospace;}
+.theme-teacher .task-item{background:rgba(30,20,5,.5);border-color:rgba(255,220,100,.15);}
+.theme-teacher .task-item.t-active{border-color:rgba(255,220,100,.4);background:rgba(255,220,100,.05);}
+.theme-teacher .task-item.t-done{border-color:rgba(255,220,100,.2);}
+.chalk-line{display:flex;align-items:baseline;gap:8px;padding:4px 0;flex-wrap:wrap;}
+.chalk-bullet{font-size:1rem;color:#FFD93D;flex-shrink:0;width:18px;}
+.chalk-text{font-size:.95rem;font-weight:700;color:#FFF9E6;flex:1;font-family:'Courier New',monospace;letter-spacing:.02em;}
+.chalk-done .chalk-text{text-decoration:line-through;color:rgba(255,249,230,.4);}
+.chalk-sub{font-size:.72rem;color:rgba(255,249,230,.35);font-style:italic;}
+.chalk-coins{font-size:.75rem;font-weight:800;color:#FFD93D;margin-left:auto;}
+
+/* ═══ CHEF / RECIPE THEME ═══ */
+.theme-chef .task-item{background:rgba(40,5,20,.4);border-color:rgba(244,114,182,.15);}
+.theme-chef .task-item.t-active{border-color:rgba(244,114,182,.4);background:rgba(244,114,182,.06);}
+.theme-chef .task-item.t-done{border-color:rgba(244,114,182,.25);}
+.rc-step{display:flex;gap:14px;align-items:flex-start;}
+.rc-num{width:32px;height:32px;border-radius:50%;background:rgba(244,114,182,.15);border:2px solid rgba(244,114,182,.3);display:flex;align-items:center;justify-content:center;font-family:var(--fd);font-size:.9rem;font-weight:800;color:#F472B6;flex-shrink:0;}
+.rc-done{background:rgba(16,185,129,.15);border-color:#10B981;color:#10B981;}
+.rc-body{flex:1;}
+.rc-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.rc-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.rc-ready{font-size:.8rem;font-weight:700;color:#F472B6;margin-top:6px;padding:6px 10px;background:rgba(244,114,182,.08);border-radius:var(--r);border:1px solid rgba(244,114,182,.2);}
+
+/* ═══ SCIENTIST / LAB THEME ═══ */
+.theme-scientist .task-item{background:rgba(0,30,30,.4);border-color:rgba(52,211,153,.15);}
+.theme-scientist .task-item.t-active{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.06);}
+.theme-scientist .task-item.t-done{border-color:rgba(52,211,153,.3);}
+.sci-header{display:flex;gap:14px;align-items:center;}
+.sci-tube{width:24px;height:60px;border-radius:0 0 12px 12px;border:2px solid rgba(52,211,153,.4);background:rgba(0,0,0,.3);position:relative;overflow:hidden;flex-shrink:0;}
+.sci-liquid{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(180deg,rgba(52,211,153,.6),rgba(16,185,129,.9));border-radius:0 0 10px 10px;transition:height 1s ease;}
+.sci-info{flex:1;}
+.sci-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.sci-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.sci-result{font-size:.8rem;font-weight:700;color:#34D399;margin-top:6px;padding:6px 10px;background:rgba(52,211,153,.08);border-radius:var(--r);}
+
+/* ═══ DETECTIVE / CASE BOARD THEME ═══ */
+.theme-detective .task-item{background:rgba(20,15,0,.5);border-color:rgba(251,191,36,.15);position:relative;}
+.theme-detective .task-item.t-active{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.05);}
+.theme-detective .task-item.t-done{border-color:rgba(251,191,36,.2);}
+.det-pin{width:10px;height:10px;background:#EF4444;border-radius:50%;position:absolute;top:-5px;left:50%;transform:translateX(-50%);box-shadow:0 0 6px rgba(239,68,68,.5);}
+.det-card{padding:4px 0;}
+.det-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.det-label{font-size:.68rem;font-weight:800;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;}
+.det-solved{font-size:.7rem;font-weight:800;color:#10B981;background:rgba(16,185,129,.1);padding:2px 8px;border-radius:4px;border:1px solid rgba(16,185,129,.3);}
+.det-open{font-size:.7rem;font-weight:800;color:#FBBF24;background:rgba(251,191,36,.1);padding:2px 8px;border-radius:4px;border:1px solid rgba(251,191,36,.3);}
+.det-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.det-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.det-reward{font-size:.78rem;font-weight:700;color:#FBBF24;margin-top:6px;}
+
+/* ═══ FARMER THEME ═══ */
+.theme-farmer .task-item{background:rgba(5,20,0,.5);border-color:rgba(134,239,172,.15);}
+.theme-farmer .task-item.t-active{border-color:rgba(134,239,172,.4);background:rgba(134,239,172,.05);}
+.theme-farmer .task-item.t-done{border-color:rgba(134,239,172,.3);}
+.farm-row{display:flex;align-items:center;gap:12px;}
+.farm-crop{font-size:2rem;flex-shrink:0;transition:all .5s;width:44px;text-align:center;}
+.farm-info{flex:1;}
+.farm-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:2px;}
+.farm-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.farm-growth{display:flex;align-items:center;gap:8px;margin-top:6px;}
+.farm-bar{flex:1;background:rgba(255,255,255,.08);border-radius:50px;height:7px;overflow:hidden;}
+.farm-fill{height:100%;border-radius:50px;background:linear-gradient(90deg,#86EFAC,#22C55E);transition:width 1s ease;}
+.farm-pct{font-size:.68rem;font-weight:700;color:#86EFAC;white-space:nowrap;}
+.farm-coins{font-size:.8rem;font-weight:800;color:#FFD93D;flex-shrink:0;}
+
+/* ═══ VET THEME ═══ */
+.theme-vet .task-item{background:rgba(0,20,25,.4);border-color:rgba(167,139,250,.15);}
+.theme-vet .task-item.t-active{border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.06);}
+.theme-vet .task-item.t-done{border-color:rgba(167,139,250,.3);}
+.vet-row{display:flex;gap:14px;align-items:flex-start;}
+.vet-checkbox{width:26px;height:26px;border-radius:6px;border:2px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:800;color:#A78BFA;flex-shrink:0;margin-top:2px;transition:all .3s;}
+.vet-checked{background:rgba(167,139,250,.25);border-color:#A78BFA;color:#A78BFA;}
+.vet-info{flex:1;}
+.vet-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.vet-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.vet-complete{font-size:.8rem;font-weight:700;color:#A78BFA;margin-top:6px;padding:6px 10px;background:rgba(167,139,250,.08);border-radius:var(--r);}
+
 @keyframes burst{0%{opacity:1;transform:translateY(0) scale(1);}100%{opacity:0;transform:translateY(-80px) scale(1.4);}}
 .burst{position:fixed;pointer-events:none;z-index:9999;font-family:var(--fd);font-size:1.05rem;font-weight:800;color:#FFD93D;text-shadow:0 0 10px rgba(255,217,61,.5);animation:burst .75s ease-out forwards;}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:rgba(10,16,30,.94);color:white;padding:9px 20px;border-radius:50px;font-weight:700;font-size:.83rem;z-index:10000;transition:transform .32s cubic-bezier(.34,1.2,.64,1);box-shadow:0 6px 24px rgba(0,0,0,.3);pointer-events:none;white-space:nowrap;border:1px solid rgba(255,255,255,.09);backdrop-filter:blur(10px);}
 .toast.show{transform:translateX(-50%) translateY(0);}
-
-
-/* ══════════════════════════════════════════
-   IMMERSIVE JOB THEMES
-══════════════════════════════════════════ */
-
-/* --- GENERAL LIGHT THEME ADJUSTMENTS --- */
-.job-mode-teacher, .job-mode-explorer, .job-mode-chef, .job-mode-vet { color: #1e293b; }
-.job-mode-teacher .g-ptitle, .job-mode-explorer .g-ptitle, .job-mode-chef .g-ptitle, .job-mode-vet .g-ptitle { color: #0f172a; }
-.job-mode-teacher .g-psub, .job-mode-explorer .g-psub, .job-mode-chef .g-psub, .job-mode-vet .g-psub { color: #475569; }
-.job-mode-teacher .g-close, .job-mode-explorer .g-close, .job-mode-chef .g-close, .job-mode-vet .g-close { background: #e2e8f0; color: #475569; }
-.job-mode-teacher .g-close:hover, .job-mode-explorer .g-close:hover, .job-mode-chef .g-close:hover, .job-mode-vet .g-close:hover { background: #ef4444; color: white; }
-
-/* Light Theme Timer Bars & Shared Elements */
-.job-mode-teacher .tt-bar, .job-mode-explorer .tt-bar, .job-mode-chef .tt-bar, .job-mode-vet .tt-bar { background: rgba(0,0,0,0.1); }
-.job-mode-teacher .tt-time, .job-mode-explorer .tt-time, .job-mode-chef .tt-time, .job-mode-vet .tt-time { color: #0f172a; }
-.job-mode-teacher .tt-coins, .job-mode-explorer .tt-coins, .job-mode-chef .tt-coins, .job-mode-vet .tt-coins { color: #d97706; }
-.job-mode-teacher .task-summary, .job-mode-explorer .task-summary, .job-mode-chef .task-summary, .job-mode-vet .task-summary { background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); color: #475569; }
-.job-mode-teacher .bonus-hdr, .job-mode-explorer .bonus-hdr, .job-mode-chef .bonus-hdr, .job-mode-vet .bonus-hdr { color: #64748b; }
-.job-mode-teacher .bonus-row, .job-mode-explorer .bonus-row, .job-mode-chef .bonus-row, .job-mode-vet .bonus-row { background: rgba(0,0,0,0.02); border-color: rgba(0,0,0,0.1); color: #1e293b; }
-.job-mode-teacher .bnm, .job-mode-explorer .bnm, .job-mode-chef .bnm, .job-mode-vet .bnm { color: #1e293b; }
-.job-mode-teacher .btag, .job-mode-explorer .btag, .job-mode-chef .btag, .job-mode-vet .btag { color: #d97706; background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); }
-
-/* ═══ TEACHER (WHITEBOARD) ═══ */
-.job-mode-teacher {
-  background: #ffffff !important;
-  border: 12px solid #cbd5e1 !important; /* Aluminum Frame */
-  border-radius: 8px !important;
-  box-shadow: inset 0 0 20px rgba(0,0,0,0.05), 0 28px 72px rgba(0,0,0,0.55) !important;
-}
-.job-mode-teacher .g-ptitle { font-family: 'Baloo 2', cursive; font-size: 2.2rem; border-bottom: 3px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 16px; }
-.job-mode-teacher .task-list { padding: 0 10px; }
-.job-mode-teacher .task-item { border-radius: 0; border: none; border-bottom: 2px dashed #cbd5e1; background: transparent; padding: 12px 8px; font-family: 'Baloo 2', cursive; }
-.job-mode-teacher .task-item.t-active { background: rgba(59,130,246,0.05); }
-.job-mode-teacher .wb-marker-line { display: flex; align-items: flex-start; gap: 12px; font-size: 1.2rem; color: #1d4ed8; }
-.job-mode-teacher .wb-bullet { font-size: 1.5rem; font-weight: bold; line-height: 1; }
-.job-mode-teacher .wb-name { font-weight: 700; line-height: 1.1; color: #0f172a; }
-.job-mode-teacher .wb-sub { font-size: 0.85rem; color: #64748b; font-family: 'Plus Jakarta Sans', sans-serif; }
-.job-mode-teacher .task-item.t-done .wb-marker-line { color: #10b981; text-decoration: line-through; opacity: 0.7; }
-
-/* ═══ EXPLORER (MAP) ═══ */
-.job-mode-explorer {
-  background: #fdf6e3 !important; /* Parchment */
-  background-image: radial-gradient(#d4c5b0 2px, transparent 2px) !important;
-  background-size: 30px 30px !important;
-  border: 6px solid #8b5a2b !important;
-  border-radius: 12px !important;
-}
-.job-mode-explorer .g-ptitle { font-family: 'Baloo 2', cursive; font-size: 2.2rem; text-shadow: 1px 1px 0 rgba(255,255,255,0.5); }
-.map-container { position: relative; padding-left: 45px; padding-top: 10px; }
-.map-path-line { position: absolute; top: 0; bottom: 0; left: 20px; width: 4px; border-left: 4px dashed #cdb496; }
-.map-node { position: relative; margin-bottom: 25px; background: rgba(255,255,255,0.8); border: 2px solid #d4c5b0; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-.map-node.t-active { border-color: #3b82f6; background: rgba(255,255,255,0.95); box-shadow: 0 6px 16px rgba(59,130,246,0.15); }
-.map-node.t-done { border-color: #10b981; background: rgba(240,253,244,0.9); }
-.map-pin { position: absolute; left: -34px; top: 20px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; border: 3px solid #fdf6e3; z-index: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-.map-node.t-done .map-pin { background: #10b981; }
-.map-avatar { position: absolute; left: -48px; top: -16px; font-size: 2.5rem; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3)); animation: bounce 1.5s infinite; z-index: 2; }
-@keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-.job-mode-explorer .ex-name { color: #0f172a; font-size: 1.1rem; }
-.job-mode-explorer .ex-sub { color: #64748b; }
-
-/* ═══ CHEF (RECIPE CARD) ═══ */
-.job-mode-chef { background: #fff8f0 !important; border: 1px solid #e2e8f0 !important; border-left: 36px solid #fecaca !important; border-radius: 8px !important; }
-.job-mode-chef .g-ptitle { font-family: 'Baloo 2', cursive; font-size: 2rem; }
-.job-mode-chef .task-item { background: transparent; border: none; border-bottom: 2px solid #f1f5f9; border-radius: 0; padding: 16px 0; }
-.job-mode-chef .rc-name { color: #0f172a; font-size: 1.1rem; }
-.job-mode-chef .rc-sub { color: #64748b; }
-
-/* ═══ DETECTIVE (CORKBOARD) ═══ */
-.job-mode-detective {
-  background: #a1622b !important; /* Cork */
-  background-image: radial-gradient(rgba(0,0,0,0.1) 2px, transparent 2px), radial-gradient(rgba(0,0,0,0.1) 2px, transparent 2px) !important;
-  background-size: 24px 24px !important; background-position: 0 0, 12px 12px !important;
-  border: 12px solid #4a2b18 !important; border-radius: 8px !important;
-}
-.job-mode-detective .g-ptitle { color: #fef08a; text-shadow: 2px 2px 4px rgba(0,0,0,0.6); }
-.job-mode-detective .g-psub { color: #fde047; }
-.job-mode-detective .task-list { display: flex; flex-direction: column; gap: 15px; }
-.job-mode-detective .task-item { background: #fef08a; color: #0f172a; border: none; border-radius: 2px; box-shadow: 3px 5px 10px rgba(0,0,0,0.3); padding: 16px; position: relative; }
-.job-mode-detective .task-item:nth-child(odd) { transform: rotate(-1deg); }
-.job-mode-detective .task-item:nth-child(even) { transform: rotate(1deg); }
-.job-mode-detective .task-item.t-done { background: #bbf7d0; }
-.job-mode-detective .task-item.t-active { background: #bfdbfe; }
-.job-mode-detective .det-pin { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); width: 14px; height: 14px; background: #ef4444; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
-.job-mode-detective .tt-bar { background: rgba(0,0,0,0.1); }
-.job-mode-detective .tt-time { color: #0f172a; }
-.job-mode-detective .tt-coins { color: #b45309; }
-.job-mode-detective .det-name { color: #0f172a; }
-.job-mode-detective .det-sub { color: #475569; }
-
-/* ═══ FARMER (FIELD) ═══ */
-.job-mode-farmer { background: #2e1a06 !important; border: 8px solid #4ade80 !important; border-radius: 12px !important; }
-.job-mode-farmer .g-ptitle { color: #4ade80; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
-.job-mode-farmer .g-psub { color: #86efac; }
-.job-mode-farmer .task-item { background: rgba(0,0,0,0.3); border: 2px solid #5c3a21; border-radius: 12px; }
-.job-mode-farmer .task-item.t-active { border-color: #3b82f6; background: rgba(59,130,246,0.1); }
-.job-mode-farmer .task-item.t-done { border-color: #22c55e; background: rgba(34,197,94,0.1); }
-
-/* ═══ SCIENTIST (LAB BENCH) ═══ */
-.job-mode-scientist { background: #06111a !important; border: 2px solid #0ea5e9 !important; box-shadow: inset 0 0 60px rgba(14,165,233,0.1) !important; }
-.job-mode-scientist .g-ptitle { color: #38bdf8; text-shadow: 0 0 10px rgba(56,189,248,0.5); }
-.job-mode-scientist .task-item { background: rgba(14,165,233,0.05); border: 1px solid rgba(14,165,233,0.2); }
-.job-mode-scientist .task-item.t-active { border-color: #38bdf8; background: rgba(56,189,248,0.1); box-shadow: 0 0 15px rgba(56,189,248,0.2); }
-
-/* ═══ VET (CLIPBOARD) ═══ */
-.job-mode-vet { background: #f8fafc !important; border: 1px solid #cbd5e1 !important; border-top: 45px solid #334155 !important; border-radius: 12px 12px 4px 4px !important; position: relative; }
-.job-mode-vet::before { content: ''; position: absolute; top: -35px; left: 50%; transform: translateX(-50%); width: 60px; height: 16px; border: 4px solid #94a3b8; border-radius: 10px; }
-.job-mode-vet .g-close { top: -35px; right: 15px; } /* move to clipboard clip */
-.job-mode-vet .task-item { background: white; border: 1px solid #e2e8f0; border-left: 4px solid #a78bfa; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
-.job-mode-vet .vet-name { color: #0f172a; }
-.job-mode-vet .vet-sub { color: #64748b; }
 </style>
 </head>
 <body>
@@ -2301,4 +2304,3 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 
 </body>
 </html>
-```
