@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
 <script type="module">
-import { initializeApp }                           from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { initializeApp, getApps }                  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword,
          signInWithEmailAndPassword, signOut,
          onAuthStateChanged }                       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -20,17 +20,22 @@ import { getFirestore, doc, setDoc, getDoc,
    🔥 PASTE YOUR FIREBASE CONFIG HERE
 ═══════════════════════════════════════ */
 const firebaseConfig = {
-  apiKey:            "AIzaSyDROpntYUchKDQdBNF2_Z9bAj38cuIUVN0",
-  authDomain:        "homeworktown.firebaseapp.com",
-  projectId:         "homeworktown",
-  storageBucket:     "homeworktown.firebasestorage.app",
-  messagingSenderId: "104477598290",
-  appId:             "1:104477598290:web:bef8af5b00a5070572f58b"
+  apiKey:            "PASTE_YOUR_API_KEY_HERE",
+  authDomain:        "PASTE_YOUR_AUTH_DOMAIN_HERE",
+  projectId:         "PASTE_YOUR_PROJECT_ID_HERE",
+  storageBucket:     "PASTE_YOUR_STORAGE_BUCKET_HERE",
+  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
+  appId:             "PASTE_YOUR_APP_ID_HERE"
 };
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+
+// Second Firebase app instance — used ONLY for creating child accounts
+// This prevents creating a child from signing out the parent
+const app2  = initializeApp(firebaseConfig, 'child-creator');
+const auth2 = getAuth(app2);
 
 /* ═══════════════════════════════════════
    GLOBAL STATE
@@ -150,17 +155,16 @@ window.addChild = async function() {
   if (!/^[a-z0-9_]+$/.test(uname)) { showErr('ac-err', 'Username: only letters, numbers and underscore.'); return; }
   setBtnLoad('ac-btn', true, 'Adding child…');
   try {
-    // Check username unique
+    // Check username is unique
     const uq = query(collection(db, 'children'), where('username', '==', uname));
     const uSnap = await getDocs(uq);
     if (!uSnap.empty) { showErr('ac-err', 'That username is taken. Try another.'); setBtnLoad('ac-btn', false, 'Add Child'); return; }
 
-    // Store parent uid before creating child account
     const parentUid = _HWT.user.uid;
 
-    // Create child Firebase account
+    // Use auth2 (secondary app) so parent stays logged in
     const fakeEmail = uname + '@hwtchild.local';
-    const cred = await createUserWithEmailAndPassword(auth, fakeEmail, pass);
+    const cred = await createUserWithEmailAndPassword(auth2, fakeEmail, pass);
     await setDoc(doc(db, 'children', cred.user.uid), {
       parentId: parentUid, name, age, avatar: av, username: uname,
       coins: 0, day: 1,
@@ -170,10 +174,20 @@ window.addChild = async function() {
       createdAt: serverTimestamp()
     });
 
-    // Sign out child account and send parent back to login
-    await signOut(auth);
-    goTo('s-p-login');
-    toast('✅ ' + av + ' ' + name + ' added! Please sign back in.');
+    // Sign out the secondary app — parent on main app is untouched
+    await signOut(auth2);
+
+    // Clear form and stay on dashboard
+    document.getElementById('ac-name').value = '';
+    document.getElementById('ac-user').value = '';
+    document.getElementById('ac-pass').value = '';
+    document.getElementById('ac-pass2').value = '';
+    setBtnLoad('ac-btn', false, 'Add Child');
+
+    toast('✅ ' + av + ' ' + name + ' added! Username: ' + uname);
+    goTo('s-parent');
+    await setTab('children');
+
   } catch(e) {
     showErr('ac-err', friendlyAuthErr(e.code));
     setBtnLoad('ac-btn', false, 'Add Child');
