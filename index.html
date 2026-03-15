@@ -10,7 +10,8 @@
 import { initializeApp }                           from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword,
          signInWithEmailAndPassword, signOut,
-         onAuthStateChanged }                       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+         onAuthStateChanged, GoogleAuthProvider,
+         signInWithPopup }                          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc,
          updateDoc, collection, query, where,
          getDocs, addDoc, deleteDoc, onSnapshot,
@@ -20,12 +21,12 @@ import { getFirestore, doc, setDoc, getDoc,
    🔥 PASTE YOUR FIREBASE CONFIG HERE
 ═══════════════════════════════════════ */
 const firebaseConfig = {
-  apiKey:            "AIzaSyDROpntYUchKDQdBNF2_Z9bAj38cuIUVN0",
-  authDomain:        "homeworktown.firebaseapp.com",
-  projectId:         "homeworktown",
-  storageBucket:     "homeworktown.firebasestorage.app",
-  messagingSenderId: "104477598290",
-  appId:             "1:104477598290:web:bef8af5b00a5070572f58b"
+  apiKey:            "PASTE_YOUR_API_KEY_HERE",
+  authDomain:        "PASTE_YOUR_AUTH_DOMAIN_HERE",
+  projectId:         "PASTE_YOUR_PROJECT_ID_HERE",
+  storageBucket:     "PASTE_YOUR_STORAGE_BUCKET_HERE",
+  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
+  appId:             "PASTE_YOUR_APP_ID_HERE"
 };
 
 const app  = initializeApp(firebaseConfig);
@@ -89,42 +90,32 @@ function hideLoader() {
 }
 
 /* ═══════════════════════════════════════
-   PARENT AUTH
+   PARENT AUTH — Google Sign-In
 ═══════════════════════════════════════ */
-window.parentLogin = async function() {
-  const email = v('pl-email').trim();
-  const pass  = v('pl-pass');
-  hideErr('pl-err');
-  if (!email || !pass) { showErr('pl-err', 'Please fill in both fields.'); return; }
-  setBtnLoad('pl-btn', true, 'Signing in…');
-  try {
-    await signInWithEmailAndPassword(auth, email, pass);
-  } catch(e) {
-    showErr('pl-err', friendlyAuthErr(e.code));
-    setBtnLoad('pl-btn', false, 'Sign In');
-  }
-};
+const googleProvider = new GoogleAuthProvider();
 
-window.parentRegister = async function() {
-  const fname = v('pr-fname').trim();
-  const lname = v('pr-lname').trim();
-  const email = v('pr-email').trim();
-  const pass  = v('pr-pass');
-  const pass2 = v('pr-pass2');
-  hideErr('pr-err');
-  if (!fname || !email || !pass) { showErr('pr-err', 'Please fill in all fields.'); return; }
-  if (pass !== pass2) { showErr('pr-err', 'Passwords do not match.'); return; }
-  if (pass.length < 6) { showErr('pr-err', 'Password must be at least 6 characters.'); return; }
-  setBtnLoad('pr-btn', true, 'Creating account…');
+window.parentGoogleSignIn = async function() {
+  hideErr('pl-err');
+  setBtnLoad('pl-btn', true, 'Opening Google…');
   try {
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    await setDoc(doc(db, 'parents', cred.user.uid), {
-      name: fname + ' ' + lname, email, createdAt: serverTimestamp()
-    });
+    const result = await signInWithPopup(auth, googleProvider);
+    const user   = result.user;
+    // Check if parent doc exists — if not, create it (first time sign in)
+    const pSnap  = await getDoc(doc(db, 'parents', user.uid));
+    if (!pSnap.exists()) {
+      const nameParts = (user.displayName || 'Parent').split(' ');
+      await setDoc(doc(db, 'parents', user.uid), {
+        name:      user.displayName || 'Parent',
+        email:     user.email,
+        createdAt: serverTimestamp()
+      });
+    }
     // onAuthStateChanged will fire and open dashboard
   } catch(e) {
-    showErr('pr-err', friendlyAuthErr(e.code));
-    setBtnLoad('pr-btn', false, 'Create Account');
+    if (e.code !== 'auth/popup-closed-by-user') {
+      showErr('pl-err', 'Google sign-in failed. Please try again.');
+    }
+    setBtnLoad('pl-btn', false, 'Continue with Google');
   }
 };
 
@@ -1138,7 +1129,17 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
   display:flex;align-items:center;justify-content:center;font-size:.72rem;
 }
 
-/* ═══ AUTH PAGES ═══ */
+/* Google sign-in button */
+.google-btn{
+  width:100%;padding:13px 20px;border-radius:10px;
+  border:1.5px solid #E5E7EB;background:white;
+  font-family:var(--ff);font-weight:700;font-size:.95rem;color:var(--dark);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;
+  transition:background .15s,box-shadow .15s,transform .12s;
+  box-shadow:0 1px 3px rgba(0,0,0,.08);
+}
+.google-btn:hover{background:#F9FAFB;box-shadow:0 4px 16px rgba(0,0,0,.1);transform:translateY(-1px);}
+.google-btn:disabled{opacity:.5;cursor:not-allowed;transform:none!important;}
 .auth-bg{flex:1;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto;}
 .auth-bg-l{background:var(--bg);}
 .auth-bg-d{background:linear-gradient(145deg,#0c1220,#1a2a4a);}
@@ -1403,7 +1404,7 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
     </div>
     <div class="sp-nav-links">
       <button class="sp-nav-link" onclick="goTo('s-p-login')">Sign in</button>
-      <button class="sp-nav-cta" onclick="goTo('s-p-register')">Get started free</button>
+      <button class="sp-nav-cta" onclick="goTo('s-p-login')">Sign in with Google</button>
     </div>
   </nav>
 
@@ -1427,8 +1428,8 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
           Homework Town turns daily homework into a job in a virtual town. Children pick a role, complete tasks as missions, earn coins, and build their own home — all while actually doing their schoolwork.
         </p>
         <div class="sp-ctas">
-          <button class="sp-cta-primary" onclick="goTo('s-p-register')">
-            Get started free →
+          <button class="sp-cta-primary" onclick="goTo('s-p-login')">
+            Get started with Google →
           </button>
           <button class="sp-cta-secondary" onclick="goTo('s-c-login')">
             🎮 I'm a kid — play!
@@ -1524,42 +1525,26 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 
 </div>
 
-<!-- ══════════ PARENT LOGIN ══════════ -->
+<!-- ══════════ PARENT LOGIN — Google ══════════ -->
 <div id="s-p-login" class="screen">
   <div class="auth-bg auth-bg-l" style="flex:1;">
-    <div class="auth-card">
-      <button class="back-btn" onclick="goTo('s-splash')">← Back</button>
-      <div class="auth-icon" style="background:#EFF6FF;">👨‍👩‍👧</div>
+    <div class="auth-card" style="max-width:420px;text-align:center;">
+      <button class="back-btn" style="display:block;margin-bottom:20px;" onclick="goTo('s-splash')">← Back</button>
+      <div class="auth-icon" style="background:#EFF6FF;margin:0 auto 16px;">👨‍👩‍👧</div>
       <div class="auth-h2">Parent Dashboard</div>
-      <p class="auth-p">Sign in to manage homework, rewards and your children's progress.</p>
+      <p class="auth-p" style="margin-bottom:28px;">Sign in with your Google account to manage homework, rewards and your children's progress.</p>
       <div class="err-box" id="pl-err"></div>
-      <div class="fg"><label>Email</label><input class="fi" id="pl-email" type="email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')parentLogin()"></div>
-      <div class="fg"><label>Password</label><input class="fi" id="pl-pass" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')parentLogin()"></div>
-      <button class="submit-btn btn-blue" id="pl-btn" onclick="parentLogin()">Sign In</button>
-      <div class="auth-switch">No account? <a class="link" onclick="goTo('s-p-register')">Create one free →</a></div>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════ PARENT REGISTER ══════════ -->
-<div id="s-p-register" class="screen">
-  <div class="auth-bg auth-bg-l" style="flex:1;overflow-y:auto;">
-    <div class="auth-card" style="max-width:500px;">
-      <button class="back-btn" onclick="goTo('s-p-login')">← Back</button>
-      <div class="auth-icon" style="background:#EFF6FF;">✨</div>
-      <div class="auth-h2">Create Account</div>
-      <p class="auth-p">Set up your family's Homework Town in under 2 minutes.</p>
-      <div class="row2">
-        <div class="fg"><label>First Name</label><input class="fi" id="pr-fname" placeholder="Jane"></div>
-        <div class="fg"><label>Last Name</label><input class="fi" id="pr-lname" placeholder="Smith"></div>
-      </div>
-      <div class="fg"><label>Email</label><input class="fi" id="pr-email" type="email" placeholder="you@example.com"></div>
-      <div class="row2">
-        <div class="fg"><label>Password</label><input class="fi" id="pr-pass" type="password" placeholder="At least 6 characters"></div>
-        <div class="fg"><label>Confirm Password</label><input class="fi" id="pr-pass2" type="password" placeholder="Same again"></div>
-      </div>
-      <div class="err-box" id="pr-err"></div>
-      <button class="submit-btn btn-blue" id="pr-btn" onclick="parentRegister()">Create Account</button>
+      <!-- Google Sign-In Button -->
+      <button class="google-btn" id="pl-btn" onclick="parentGoogleSignIn()">
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+          <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+          <path d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 6.293C4.672 4.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
+        </svg>
+        Continue with Google
+      </button>
+      <p style="font-size:.78rem;color:var(--mid);margin-top:16px;font-weight:500;">First time? We'll create your account automatically.</p>
     </div>
   </div>
 </div>
