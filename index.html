@@ -27,6 +27,7 @@ const firebaseConfig = {
   messagingSenderId: "104477598290",
   appId:             "1:104477598290:web:bef8af5b00a5070572f58b"
 };
+
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -545,21 +546,29 @@ window.confirmJob = async function() {
   setTimeout(()=>openPanel('tasks'),320);
 };
 
-/* tasks */
+/* ═══════════════════════════════════════
+   TASKS — themed per job
+═══════════════════════════════════════ */
 async function buildTasksPanel() {
   const job = JOBS.find(j=>j.id===_HWT.job);
-  document.getElementById('tp-title').textContent = job.icon+' '+job.name+' Day';
-  document.getElementById('tp-sub').textContent   = 'Complete your missions, '+_HWT.childData.name+'!';
+  const panel = document.getElementById('ov-tasks');
 
-  const dayIdx = ((new Date().getDay())+6)%7; // Mon=0
+  // Restyle panel per job
+  panel.querySelector('.g-panel').style.background = JOB_THEMES[_HWT.job]?.panelBg || '#131c2e';
+
+  document.getElementById('tp-title').innerHTML = JOB_THEMES[_HWT.job]?.panelTitle || job.icon+' '+job.name+' Day';
+  document.getElementById('tp-sub').textContent = JOB_THEMES[_HWT.job]?.panelSub.replace('NAME', _HWT.childData.name) || 'Complete your missions, '+_HWT.childData.name+'!';
+
+  // Get today's homework — look up by parentId too since child has no auth
+  const dayIdx = ((new Date().getDay())+6)%7;
   const q = query(collection(db,'homework'),
     where('childId','==',_HWT.childData.id), where('day','==',dayIdx));
   const s = await getDocs(q);
   let hw = s.docs.map(d=>({id:d.id,...d.data()}));
   if (!hw.length) hw = [
-    {id:'d0',subject:'Reading', coins:10,minutes:10,notes:'Demo'},
-    {id:'d1',subject:'Maths',   coins:15,minutes:12,notes:'Demo'},
-    {id:'d2',subject:'Spelling',coins:10,minutes:8, notes:'Demo'},
+    {id:'d0',subject:'Reading', coins:10,minutes:10,notes:''},
+    {id:'d1',subject:'Maths',   coins:15,minutes:12,notes:''},
+    {id:'d2',subject:'Spelling',coins:10,minutes:8,notes:''},
   ];
 
   const todayKey = new Date().toDateString();
@@ -572,9 +581,9 @@ async function buildTasksPanel() {
   _HWT.tasks = hw.map(t=>({
     id:t.id, subject:t.subject, coins:t.coins, minutes:t.minutes, notes:t.notes||'',
     themed: (job.themes&&job.themes[t.subject]) ? job.themes[t.subject] : t.subject+' Mission',
-    total:  t.minutes*60,
-    left:   prog[t.id]?.left!==undefined ? prog[t.id].left : t.minutes*60,
-    done:   prog[t.id]?.done||false,
+    total:t.minutes*60,
+    left: prog[t.id]?.left!==undefined ? prog[t.id].left : t.minutes*60,
+    done: prog[t.id]?.done||false,
     started:false, paused:false,
   }));
 
@@ -585,53 +594,216 @@ async function buildTasksPanel() {
   renderAllDone();
 }
 
+/* Job visual themes */
+const JOB_THEMES = {
+  explorer: {
+    panelBg:'linear-gradient(145deg,#0d1f35,#1a2a1a)',
+    panelTitle:'🗺️ Adventure Map',
+    panelSub:'Chart your course, NAME! Complete each mission to move forward.',
+    wrapClass:'theme-explorer',
+  },
+  teacher: {
+    panelBg:'linear-gradient(145deg,#1a1200,#2a1800)',
+    panelTitle:'📋 The Chalkboard',
+    panelSub:'Class is in session, NAME! Tick off each lesson when you\'re done.',
+    wrapClass:'theme-teacher',
+  },
+  chef: {
+    panelBg:'linear-gradient(145deg,#1a0a12,#2a0a1a)',
+    panelTitle:'📋 Today\'s Recipe',
+    panelSub:'Time to cook, NAME! Complete each step to finish your dish.',
+    wrapClass:'theme-chef',
+  },
+  scientist: {
+    panelBg:'linear-gradient(145deg,#001a1a,#001a2a)',
+    panelTitle:'🔬 Lab Notebook',
+    panelSub:'Experiment time, NAME! Run each test and record your results.',
+    wrapClass:'theme-scientist',
+  },
+  detective: {
+    panelBg:'linear-gradient(145deg,#1a1400,#0d0d0d)',
+    panelTitle:'📌 Case Board',
+    panelSub:'Crack the case, NAME! Follow every clue until the mystery is solved.',
+    wrapClass:'theme-detective',
+  },
+  farmer: {
+    panelBg:'linear-gradient(145deg,#0a1a00,#0d2a00)',
+    panelTitle:'🌾 The Field Today',
+    panelSub:'Time to work the land, NAME! Tend to each crop to complete your harvest.',
+    wrapClass:'theme-farmer',
+  },
+  vet: {
+    panelBg:'linear-gradient(145deg,#001a1a,#001020)',
+    panelTitle:'📋 Patient Files',
+    panelSub:'Clinic is open, NAME! Work through each patient to complete your shift.',
+    wrapClass:'theme-vet',
+  },
+};
+
 function renderTaskList() {
-  document.getElementById('task-list').innerHTML = _HWT.tasks.map((t,i)=>taskHTML(t,i)).join('');
+  const wrap = document.getElementById('task-list');
+  const theme = JOB_THEMES[_HWT.job];
+  wrap.className = 'task-list ' + (theme?.wrapClass||'');
+  wrap.innerHTML = _HWT.tasks.map((t,i) => themedTaskHTML(t,i)).join('');
 }
 
-function taskHTML(t,i) {
-  const ic  = SICONS[t.subject]||'📚';
-  const job = JOBS.find(j=>j.id===_HWT.job);
-  const bg  = job?job.bg:'rgba(255,255,255,.08)';
-  if (t.done) return `
-    <div class="task-item t-done">
-      <div class="ti-top">
-        <div class="ti-ic" style="background:${bg};">${ic}</div>
-        <div class="ti-body"><div class="ti-themed">${t.themed}</div><div class="ti-real">${t.subject} · ${t.minutes} min</div></div>
-        <div class="ti-ctag">+${t.coins} ✓</div>
-      </div>
-      <div class="done-stamp">⭐ Completed!</div>
-    </div>`;
+function themedTaskHTML(t, i) {
   const pct = Math.round((t.total-t.left)/t.total*100);
-  const cls = (t.started&&!t.paused)?'task-item t-active':'task-item';
-  const sbtn = (t.started&&!t.paused)
-    ? `<button class="tb tb-pause" onclick="pauseTask(${i})">⏸ Pause</button>`
-    : `<button class="tb tb-start" onclick="startTask(${i})">${t.paused?'▶ Resume':'▶ Start'}</button>`;
-  return `
-    <div class="${cls}" id="tc${i}">
-      <div class="ti-top">
-        <div class="ti-ic" style="background:${bg};">${ic}</div>
-        <div class="ti-body">
-          <div class="ti-themed">${t.themed}</div>
-          <div class="ti-real">${t.subject} · ${t.minutes} min${t.notes?' · '+t.notes:''}</div>
-        </div>
-        <div class="ti-ctag">+${t.coins}</div>
+  const timeStr = fmt(t.left);
+  const canDone = t.started || t.left <= 0;
+  const isActive = t.started && !t.paused;
+
+  // Shared timer controls — always present
+  const controls = `
+    <div class="tt-controls">
+      <div class="tt-timer-row">
+        <div class="tt-bar"><div class="tt-fill" id="tf${i}" style="width:${pct}%"></div></div>
+        <div class="tt-time" id="tn${i}">${timeStr}</div>
       </div>
-      <div class="timer-wrap">
-        <div class="timer-track"><div class="timer-fill" id="tf${i}" style="width:${pct}%"></div></div>
-        <div class="timer-row">
-          <div class="timer-num" id="tn${i}">${fmt(t.left)}</div>
-          <div class="timer-btns">
-            ${sbtn}
-            <button class="tb tb-done" onclick="doneTask(${i})"${(t.started||t.left<=0)?'':' disabled'}>✓ Done</button>
+      <div class="tt-btns">
+        ${t.done ? '' :
+          (isActive
+            ? `<button class="tb tb-pause" onclick="pauseTask(${i})">⏸ Pause</button>`
+            : `<button class="tb tb-start" onclick="startTask(${i})">${t.paused?'▶ Resume':'▶ Start'}</button>`)
+        }
+        ${t.done ? '' : `<button class="tb tb-done" onclick="doneTask(${i})"${canDone?'':' disabled'}>✓ Done</button>`}
+        <span class="tt-coins">+${t.coins} 🪙</span>
+      </div>
+    </div>`;
+
+  switch (_HWT.job) {
+
+    case 'explorer': {
+      const steps = ['🏕️ Base Camp', '🌲 Forest Trail', '🏔️ Mountain Pass'];
+      const stepIdx = Math.min(Math.floor(pct/34), 2);
+      return `<div class="task-item ex-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="ex-header">
+          <div class="ex-pin${t.done?' ex-pin-done':''}">${t.done?'✓':'📍'}</div>
+          <div class="ex-info">
+            <div class="ex-name">${t.themed}</div>
+            <div class="ex-sub">${t.subject} · ${t.minutes} min${t.notes?' · '+t.notes:''}</div>
           </div>
         </div>
+        ${t.done ? `<div class="ex-stamp">📍 Location discovered! +${t.coins} coins</div>` : `
+        <div class="ex-path">
+          ${steps.map((s,si)=>`<div class="ex-step${si<=stepIdx&&isActive?' ex-step-active':''}">${s}</div>${si<2?'<div class="ex-connector">→</div>':''}`).join('')}
+          <div class="ex-step ex-step-dest">🏆</div>
+        </div>
+        ${controls}`}
+      </div>`;
+    }
+
+    case 'teacher': {
+      return `<div class="task-item ch-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="chalk-line${t.done?' chalk-done':''}">
+          <span class="chalk-bullet">${t.done?'✓':'✦'}</span>
+          <span class="chalk-text">${t.themed}</span>
+          <span class="chalk-sub">(${t.subject}${t.notes?' — '+t.notes:''})</span>
+          <span class="chalk-coins">+${t.coins}</span>
+        </div>
+        ${t.done ? '' : controls}
+      </div>`;
+    }
+
+    case 'chef': {
+      return `<div class="task-item rc-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="rc-step">
+          <div class="rc-num${t.done?' rc-done':''}">${t.done?'✓':_HWT.tasks.indexOf(t)+1}</div>
+          <div class="rc-body">
+            <div class="rc-name">${t.themed}</div>
+            <div class="rc-sub">${t.subject}${t.notes?' · '+t.notes:''} · ${t.minutes} min</div>
+            ${t.done ? `<div class="rc-ready">🍽️ Step complete! +${t.coins} coins</div>` : controls}
+          </div>
+        </div>
+      </div>`;
+    }
+
+    case 'scientist': {
+      return `<div class="task-item sci-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="sci-header">
+          <div class="sci-tube">
+            <div class="sci-liquid" style="height:${t.done?100:pct}%"></div>
+          </div>
+          <div class="sci-info">
+            <div class="sci-name">${t.themed}</div>
+            <div class="sci-sub">Experiment: ${t.subject}${t.notes?' · '+t.notes:''}</div>
+            ${t.done ? `<div class="sci-result">✅ Results recorded! +${t.coins} coins</div>` : ''}
+          </div>
+        </div>
+        ${t.done ? '' : controls}
+      </div>`;
+    }
+
+    case 'detective': {
+      return `<div class="task-item det-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="det-pin"></div>
+        <div class="det-card">
+          <div class="det-header">
+            <span class="det-label">CLUE #${_HWT.tasks.indexOf(t)+1}</span>
+            ${t.done?'<span class="det-solved">SOLVED ✓</span>':'<span class="det-open">OPEN</span>'}
+          </div>
+          <div class="det-name">${t.themed}</div>
+          <div class="det-sub">${t.subject}${t.notes?' — '+t.notes:''}</div>
+          ${t.done ? `<div class="det-reward">+${t.coins} coins collected</div>` : controls}
+        </div>
+      </div>`;
+    }
+
+    case 'farmer': {
+      const growPct = t.done ? 100 : pct;
+      const cropIcon = growPct < 30 ? '🌱' : growPct < 70 ? '🌿' : '🌾';
+      return `<div class="task-item farm-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="farm-row">
+          <div class="farm-crop">${t.done?'🌾':cropIcon}</div>
+          <div class="farm-info">
+            <div class="farm-name">${t.themed}</div>
+            <div class="farm-sub">${t.subject}${t.notes?' · '+t.notes:''}</div>
+            <div class="farm-growth">
+              <div class="farm-bar"><div class="farm-fill" id="tf${i}" style="width:${growPct}%"></div></div>
+              <span class="farm-pct">${t.done?'Harvested! 🌾':growPct+'% grown'}</span>
+            </div>
+          </div>
+          <div class="farm-coins">+${t.coins}🪙</div>
+        </div>
+        ${t.done ? '' : `<div class="tt-controls" style="margin-top:10px;">
+          <div class="tt-btns">
+            ${isActive
+              ? `<button class="tb tb-pause" onclick="pauseTask(${i})">⏸ Pause</button>`
+              : `<button class="tb tb-start" onclick="startTask(${i})">${t.paused?'▶ Resume':'💧 Water'}</button>`}
+            <button class="tb tb-done" onclick="doneTask(${i})"${canDone?'':' disabled'}>🌾 Harvest</button>
+            <div class="tt-time" id="tn${i}">${timeStr}</div>
+          </div>
+        </div>`}
+      </div>`;
+    }
+
+    case 'vet': {
+      return `<div class="task-item vet-task${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+        <div class="vet-row">
+          <div class="vet-checkbox${t.done?' vet-checked':''}">${t.done?'✓':''}</div>
+          <div class="vet-info">
+            <div class="vet-name">${t.themed}</div>
+            <div class="vet-sub">Patient: ${t.subject}${t.notes?' · '+t.notes:''} · ${t.minutes} min</div>
+            ${t.done
+              ? `<div class="vet-complete">Treatment complete ✓ +${t.coins} coins</div>`
+              : controls}
+          </div>
+        </div>
+      </div>`;
+    }
+
+    default: return `<div class="task-item${t.done?' t-done':''}${isActive?' t-active':''}" id="tc${i}">
+      <div class="ti-top">
+        <div class="ti-ic">${SICONS[t.subject]||'📚'}</div>
+        <div class="ti-body"><div class="ti-themed">${t.themed}</div><div class="ti-real">${t.subject} · ${t.minutes}min</div></div>
+        <div class="ti-ctag">+${t.coins}</div>
       </div>
+      ${t.done?'<div class="done-stamp">⭐ Done!</div>':controls}
     </div>`;
+  }
 }
 
 window.startTask = function(i) {
-  // pause all others first
   _HWT.tasks.forEach((_,idx)=>{ if(idx!==i) pauseTaskSilent(idx); });
   const t = _HWT.tasks[i];
   t.started=true; t.paused=false;
@@ -639,10 +811,27 @@ window.startTask = function(i) {
     if (t.left > 0) {
       t.left--;
       const pct = Math.round((t.total-t.left)/t.total*100);
+      // Update progress bar (tf = timer fill, farm-fill shares same id)
       const tf = document.getElementById('tf'+i);
       const tn = document.getElementById('tn'+i);
       if (tf) tf.style.width = pct+'%';
       if (tn) tn.textContent = fmt(t.left);
+      // Update scientist tube live
+      const sciLiq = document.querySelector(`#tc${i} .sci-liquid`);
+      if (sciLiq) sciLiq.style.height = pct+'%';
+      // Update explorer path steps
+      if (_HWT.job === 'explorer') {
+        const stepIdx = Math.min(Math.floor(pct/34), 2);
+        const steps = document.querySelectorAll(`#tc${i} .ex-step`);
+        steps.forEach((s,si) => { if(si<=stepIdx) s.classList.add('ex-step-active'); });
+      }
+      // Update farmer crop icon
+      if (_HWT.job === 'farmer') {
+        const cropEl = document.querySelector(`#tc${i} .farm-crop`);
+        const pctEl  = document.querySelector(`#tc${i} .farm-pct`);
+        if (cropEl) cropEl.textContent = pct < 30 ? '🌱' : pct < 70 ? '🌿' : '🌾';
+        if (pctEl)  pctEl.textContent  = pct + '% grown';
+      }
       if (t.left%10===0) saveProgress();
     } else {
       clearInterval(_HWT.timers[i]);
@@ -1403,7 +1592,109 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 .treat-card .tn{font-size:.74rem;font-weight:700;color:white;display:block;}
 .treat-card .tc{font-size:.66rem;font-weight:600;color:#FFD93D;display:block;}
 
-/* FX */
+/* ═══ THEMED TASK SHARED CONTROLS ═══ */
+.tt-controls{margin-top:10px;}
+.tt-timer-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.tt-bar{flex:1;background:rgba(255,255,255,.1);border-radius:50px;height:6px;overflow:hidden;}
+.tt-fill{height:100%;border-radius:50px;background:linear-gradient(90deg,#3B82F6,#10B981);transition:width .8s linear;}
+.tt-time{font-family:var(--fd);font-size:.9rem;font-weight:800;color:#60A5FA;min-width:44px;text-align:right;}
+.tt-btns{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.tt-coins{font-size:.78rem;font-weight:800;color:#FFD93D;margin-left:auto;}
+
+/* ═══ EXPLORER THEME ═══ */
+.theme-explorer .task-item{border-color:rgba(96,165,250,.2);background:rgba(0,20,40,.4);}
+.theme-explorer .task-item.t-active{border-color:#60A5FA;background:rgba(96,165,250,.1);}
+.theme-explorer .task-item.t-done{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.07);}
+.ex-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.ex-pin{width:32px;height:32px;border-radius:50%;background:rgba(96,165,250,.15);border:2px solid rgba(96,165,250,.3);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;transition:all .3s;}
+.ex-pin-done{background:rgba(52,211,153,.2);border-color:#10B981;color:#10B981;font-weight:800;}
+.ex-info{flex:1;}
+.ex-name{font-weight:800;font-size:.92rem;color:white;}
+.ex-sub{font-size:.72rem;color:rgba(255,255,255,.45);margin-top:2px;}
+.ex-path{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:rgba(0,0,0,.2);border-radius:var(--r);border:1px solid rgba(96,165,250,.1);}
+.ex-step{font-size:.7rem;font-weight:700;color:rgba(255,255,255,.3);padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.08);transition:all .4s;}
+.ex-step-active{color:#60A5FA;border-color:#60A5FA;background:rgba(96,165,250,.15);}
+.ex-step-dest{color:rgba(255,255,255,.2);}
+.ex-connector{color:rgba(255,255,255,.2);font-size:.8rem;}
+.ex-stamp{font-size:.82rem;font-weight:700;color:#10B981;padding:8px 12px;background:rgba(16,185,129,.08);border-radius:var(--r);border:1px solid rgba(16,185,129,.2);}
+
+/* ═══ TEACHER / CHALKBOARD THEME ═══ */
+.theme-teacher .g-panel{font-family:'Courier New',monospace;}
+.theme-teacher .task-item{background:rgba(30,20,5,.5);border-color:rgba(255,220,100,.15);}
+.theme-teacher .task-item.t-active{border-color:rgba(255,220,100,.4);background:rgba(255,220,100,.05);}
+.theme-teacher .task-item.t-done{border-color:rgba(255,220,100,.2);}
+.chalk-line{display:flex;align-items:baseline;gap:8px;padding:4px 0;flex-wrap:wrap;}
+.chalk-bullet{font-size:1rem;color:#FFD93D;flex-shrink:0;width:18px;}
+.chalk-text{font-size:.95rem;font-weight:700;color:#FFF9E6;flex:1;font-family:'Courier New',monospace;letter-spacing:.02em;}
+.chalk-done .chalk-text{text-decoration:line-through;color:rgba(255,249,230,.4);}
+.chalk-sub{font-size:.72rem;color:rgba(255,249,230,.35);font-style:italic;}
+.chalk-coins{font-size:.75rem;font-weight:800;color:#FFD93D;margin-left:auto;}
+
+/* ═══ CHEF / RECIPE THEME ═══ */
+.theme-chef .task-item{background:rgba(40,5,20,.4);border-color:rgba(244,114,182,.15);}
+.theme-chef .task-item.t-active{border-color:rgba(244,114,182,.4);background:rgba(244,114,182,.06);}
+.theme-chef .task-item.t-done{border-color:rgba(244,114,182,.25);}
+.rc-step{display:flex;gap:14px;align-items:flex-start;}
+.rc-num{width:32px;height:32px;border-radius:50%;background:rgba(244,114,182,.15);border:2px solid rgba(244,114,182,.3);display:flex;align-items:center;justify-content:center;font-family:var(--fd);font-size:.9rem;font-weight:800;color:#F472B6;flex-shrink:0;}
+.rc-done{background:rgba(16,185,129,.15);border-color:#10B981;color:#10B981;}
+.rc-body{flex:1;}
+.rc-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.rc-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.rc-ready{font-size:.8rem;font-weight:700;color:#F472B6;margin-top:6px;padding:6px 10px;background:rgba(244,114,182,.08);border-radius:var(--r);border:1px solid rgba(244,114,182,.2);}
+
+/* ═══ SCIENTIST / LAB THEME ═══ */
+.theme-scientist .task-item{background:rgba(0,30,30,.4);border-color:rgba(52,211,153,.15);}
+.theme-scientist .task-item.t-active{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.06);}
+.theme-scientist .task-item.t-done{border-color:rgba(52,211,153,.3);}
+.sci-header{display:flex;gap:14px;align-items:center;}
+.sci-tube{width:24px;height:60px;border-radius:0 0 12px 12px;border:2px solid rgba(52,211,153,.4);background:rgba(0,0,0,.3);position:relative;overflow:hidden;flex-shrink:0;}
+.sci-liquid{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(180deg,rgba(52,211,153,.6),rgba(16,185,129,.9));border-radius:0 0 10px 10px;transition:height 1s ease;}
+.sci-info{flex:1;}
+.sci-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.sci-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.sci-result{font-size:.8rem;font-weight:700;color:#34D399;margin-top:6px;padding:6px 10px;background:rgba(52,211,153,.08);border-radius:var(--r);}
+
+/* ═══ DETECTIVE / CASE BOARD THEME ═══ */
+.theme-detective .task-item{background:rgba(20,15,0,.5);border-color:rgba(251,191,36,.15);position:relative;}
+.theme-detective .task-item.t-active{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.05);}
+.theme-detective .task-item.t-done{border-color:rgba(251,191,36,.2);}
+.det-pin{width:10px;height:10px;background:#EF4444;border-radius:50%;position:absolute;top:-5px;left:50%;transform:translateX(-50%);box-shadow:0 0 6px rgba(239,68,68,.5);}
+.det-card{padding:4px 0;}
+.det-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.det-label{font-size:.68rem;font-weight:800;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;}
+.det-solved{font-size:.7rem;font-weight:800;color:#10B981;background:rgba(16,185,129,.1);padding:2px 8px;border-radius:4px;border:1px solid rgba(16,185,129,.3);}
+.det-open{font-size:.7rem;font-weight:800;color:#FBBF24;background:rgba(251,191,36,.1);padding:2px 8px;border-radius:4px;border:1px solid rgba(251,191,36,.3);}
+.det-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.det-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.det-reward{font-size:.78rem;font-weight:700;color:#FBBF24;margin-top:6px;}
+
+/* ═══ FARMER THEME ═══ */
+.theme-farmer .task-item{background:rgba(5,20,0,.5);border-color:rgba(134,239,172,.15);}
+.theme-farmer .task-item.t-active{border-color:rgba(134,239,172,.4);background:rgba(134,239,172,.05);}
+.theme-farmer .task-item.t-done{border-color:rgba(134,239,172,.3);}
+.farm-row{display:flex;align-items:center;gap:12px;}
+.farm-crop{font-size:2rem;flex-shrink:0;transition:all .5s;width:44px;text-align:center;}
+.farm-info{flex:1;}
+.farm-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:2px;}
+.farm-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.farm-growth{display:flex;align-items:center;gap:8px;margin-top:6px;}
+.farm-bar{flex:1;background:rgba(255,255,255,.08);border-radius:50px;height:7px;overflow:hidden;}
+.farm-fill{height:100%;border-radius:50px;background:linear-gradient(90deg,#86EFAC,#22C55E);transition:width 1s ease;}
+.farm-pct{font-size:.68rem;font-weight:700;color:#86EFAC;white-space:nowrap;}
+.farm-coins{font-size:.8rem;font-weight:800;color:#FFD93D;flex-shrink:0;}
+
+/* ═══ VET THEME ═══ */
+.theme-vet .task-item{background:rgba(0,20,25,.4);border-color:rgba(167,139,250,.15);}
+.theme-vet .task-item.t-active{border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.06);}
+.theme-vet .task-item.t-done{border-color:rgba(167,139,250,.3);}
+.vet-row{display:flex;gap:14px;align-items:flex-start;}
+.vet-checkbox{width:26px;height:26px;border-radius:6px;border:2px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:800;color:#A78BFA;flex-shrink:0;margin-top:2px;transition:all .3s;}
+.vet-checked{background:rgba(167,139,250,.25);border-color:#A78BFA;color:#A78BFA;}
+.vet-info{flex:1;}
+.vet-name{font-weight:800;font-size:.92rem;color:white;margin-bottom:3px;}
+.vet-sub{font-size:.72rem;color:rgba(255,255,255,.4);}
+.vet-complete{font-size:.8rem;font-weight:700;color:#A78BFA;margin-top:6px;padding:6px 10px;background:rgba(167,139,250,.08);border-radius:var(--r);}
+
 @keyframes burst{0%{opacity:1;transform:translateY(0) scale(1);}100%{opacity:0;transform:translateY(-80px) scale(1.4);}}
 .burst{position:fixed;pointer-events:none;z-index:9999;font-family:var(--fd);font-size:1.05rem;font-weight:800;color:#FFD93D;text-shadow:0 0 10px rgba(255,217,61,.5);animation:burst .75s ease-out forwards;}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:rgba(10,16,30,.94);color:white;padding:9px 20px;border-radius:50px;font-weight:700;font-size:.83rem;z-index:10000;transition:transform .32s cubic-bezier(.34,1.2,.64,1);box-shadow:0 6px 24px rgba(0,0,0,.3);pointer-events:none;white-space:nowrap;border:1px solid rgba(255,255,255,.09);backdrop-filter:blur(10px);}
