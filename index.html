@@ -232,6 +232,8 @@ const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 async function openParentDash() {
   goTo('s-parent');
   document.getElementById('sb-name').textContent = _HWT.parentData.name;
+  const mobName = document.getElementById('mob-parent-name');
+  if (mobName) mobName.textContent = _HWT.parentData.name.split(' ')[0];
   const h = new Date().getHours();
   const gr = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   document.getElementById('dash-greeting').textContent = gr + ', ' + _HWT.parentData.name.split(' ')[0] + '! 👋';
@@ -241,14 +243,58 @@ async function openParentDash() {
 window.setTab = async function(id) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.mob-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + id)?.classList.add('active');
   document.getElementById('nb-' + id)?.classList.add('active');
+  // Sync mobile bottom tab if it exists
+  const mbt = document.getElementById('mbt-' + id);
+  if (mbt) mbt.classList.add('active');
   const kids = await getKids();
   if (id === 'overview')  { renderStats(kids); renderOverview(kids); }
   if (id === 'homework')  { renderHWTabs(kids); if (kids.length) await renderWeekGrid(); }
   if (id === 'bonus')     { await renderBonusTab(); }
   if (id === 'rewards')   { await renderRewardsTab(); }
   if (id === 'children')  { renderChildrenTab(kids); }
+  if (id === 'setup')     { /* static content */ }
+};
+
+window.toggleMobDrawer = function() {
+  const sidebar = document.getElementById('p-sidebar');
+  const overlay = document.getElementById('mob-overlay');
+  const burger  = document.getElementById('mob-hamburger');
+  const isOpen  = sidebar.classList.contains('mob-open');
+  if (isOpen) {
+    sidebar.classList.remove('mob-open');
+    overlay.classList.remove('open');
+    burger?.classList.remove('open');
+  } else {
+    sidebar.classList.add('mob-open');
+    overlay.classList.add('open');
+    burger?.classList.add('open');
+  }
+};
+
+window.closeMobDrawer = function() {
+  document.getElementById('p-sidebar')?.classList.remove('mob-open');
+  document.getElementById('mob-overlay')?.classList.remove('open');
+  document.getElementById('mob-hamburger')?.classList.remove('open');
+};
+
+window.copyRules = function() {
+  const el = document.getElementById('rules-box');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    toast('Rules copied to clipboard! Paste in Firebase console ✓');
+  }).catch(() => {
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = el.textContent.trim();
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('Rules copied! Paste in Firebase console ✓');
+  });
 };
 
 async function getKids() {
@@ -1273,75 +1319,85 @@ async function buildRewardShopPanel() {
   const el = document.getElementById('rshop-content');
   el.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,.35);font-size:.85rem;">Loading rewards…</div>';
 
-  try {
-    // PRIMARY: use cachedRewards stored on the child doc — no auth needed
-    let rewards = Array.isArray(c.cachedRewards) ? c.cachedRewards : [];
+  let rewards = [];
 
-    // FALLBACK: try direct Firestore query (works if rules allow it)
-    if (!rewards.length && c.parentId) {
-      try {
-        const rwSnap = await getDocs(
-          query(collection(db, 'rewards'), where('parentId', '==', c.parentId))
-        );
-        rewards = rwSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      } catch(e2) {
-        console.warn('Direct rewards query failed (likely permissions):', e2.message);
+  // STEP 1 — Re-fetch the child doc fresh to get latest cachedRewards
+  try {
+    const freshSnap = await getDoc(doc(db, 'children', c.id));
+    if (freshSnap.exists()) {
+      const fresh = freshSnap.data();
+      Object.assign(_HWT.childData, fresh);
+      if (Array.isArray(fresh.cachedRewards) && fresh.cachedRewards.length) {
+        rewards = fresh.cachedRewards;
       }
     }
+  } catch(e1) { console.warn('[Shop] child re-fetch failed:', e1.message); }
 
-    // Fetch this child's purchase history (reads own doc — always allowed)
-    let pendingIds = new Set();
+  // STEP 2 — If still empty, query the rewards collection directly
+  // (needs Firestore rules: match /rewards/{d} { allow list: if true; })
+  if (!rewards.length && c.parentId) {
     try {
-      const purchSnap = await getDocs(
-        query(collection(db, 'rewardPurchases'), where('childId', '==', c.id))
+      const rwSnap = await getDocs(
+        query(collection(db, 'rewards'), where('parentId', '==', c.parentId))
       );
-      pendingIds = new Set(
-        purchSnap.docs.filter(d => d.data().status === 'pending').map(d => d.data().rewardId)
-      );
-    } catch(e3) {
-      console.warn('Purchase history query failed:', e3.message);
-    }
-
-    if (!rewards.length) {
-      el.innerHTML = `<div style="text-align:center;padding:28px;">
-        <div style="font-size:2.5rem;margin-bottom:12px;">🎁</div>
-        <div style="color:rgba(255,255,255,.55);font-size:.86rem;line-height:1.7;">
-          No rewards set yet!<br>Ask your parent to add some in their dashboard.<br>
-          <span style="font-size:.72rem;color:rgba(255,255,255,.25);">They may need to save rewards again to sync them here.</span>
-        </div>
-      </div>`;
-      return;
-    }
-
-    el.innerHTML = `
-      <div class="rshop-grid">${rewards.map(r => {
-        const canAfford = (c.coins || 0) >= r.cost;
-        const isPending = pendingIds.has(r.id);
-        return `<div class="rshop-card${isPending ? ' rshop-pending' : ''}${!canAfford && !isPending ? ' rshop-locked' : ''}">
-          <div class="rshop-icon">${r.icon}</div>
-          <div class="rshop-name">${r.name}</div>
-          <div class="rshop-cost">🪙 ${r.cost} coins</div>
-          ${isPending
-            ? '<div class="rshop-status">⏳ Requested!</div>'
-            : canAfford
-              ? `<button class="rshop-btn" onclick="buyReward('${r.id}','${encodeURIComponent(r.name)}','${r.icon}',${r.cost})">Buy ✨</button>`
-              : `<div class="rshop-need">Need ${r.cost - (c.coins || 0)} more 🪙</div>`
-          }
-        </div>`;
-      }).join('')}</div>
-      <div style="margin-top:14px;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:var(--r);font-size:.74rem;color:rgba(255,255,255,.3);line-height:1.5;">
-        💡 Buying a reward sends a request to your parent. They approve it in person!
-      </div>`;
-
-  } catch(e) {
-    console.error('Reward shop error:', e);
-    el.innerHTML = `<div style="padding:14px;background:rgba(255,50,50,.08);border-radius:var(--r);border:1px solid rgba(255,50,50,.2);">
-      <div style="color:rgba(255,120,120,.9);font-size:.82rem;font-weight:700;margin-bottom:6px;">Could not load rewards</div>
-      <div style="color:rgba(255,255,255,.3);font-size:.72rem;line-height:1.5;">${e.message || 'Unknown error'}</div>
-      <button onclick="buildRewardShopPanel()" style="margin-top:10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:white;border-radius:50px;padding:6px 14px;font-size:.74rem;font-weight:600;cursor:pointer;font-family:var(--ff);">↺ Try again</button>
-    </div>`;
+      rewards = rwSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Backfill cache on child doc for next time
+      if (rewards.length) {
+        updateDoc(doc(db, 'children', c.id), { cachedRewards: rewards }).catch(()=>{});
+        _HWT.childData.cachedRewards = rewards;
+      }
+    } catch(e2) { console.warn('[Shop] collection query failed:', e2.message); }
   }
+
+  // Fetch pending purchases
+  let pendingIds = new Set();
+  try {
+    const purchSnap = await getDocs(
+      query(collection(db, 'rewardPurchases'), where('childId', '==', c.id))
+    );
+    pendingIds = new Set(
+      purchSnap.docs
+        .filter(d => d.data().status === 'pending')
+        .map(d => d.data().rewardId)
+    );
+  } catch(e3) { console.warn('[Shop] purchases query failed:', e3.message); }
+
+  if (!rewards.length) {
+    el.innerHTML = `<div style="text-align:center;padding:28px;">
+      <div style="font-size:2.5rem;margin-bottom:12px;">🎁</div>
+      <div style="color:rgba(255,255,255,.6);font-size:.88rem;font-weight:600;margin-bottom:8px;">No rewards yet</div>
+      <div style="color:rgba(255,255,255,.35);font-size:.78rem;line-height:1.8;">
+        Your parent needs to:<br>
+        1. Add rewards in their dashboard<br>
+        2. Click <b style="color:rgba(255,255,255,.55)">↺ Sync to kids</b> in the Rewards tab
+      </div>
+      <button onclick="buildRewardShopPanel()" style="margin-top:16px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:white;border-radius:50px;padding:8px 20px;font-size:.78rem;font-weight:600;cursor:pointer;font-family:var(--ff);">↺ Refresh</button>
+    </div>`;
+    return;
+  }
+
+  const c2 = _HWT.childData;
+  el.innerHTML = `
+    <div class="rshop-grid">${rewards.map(r => {
+      const canAfford = (c2.coins || 0) >= r.cost;
+      const isPending = pendingIds.has(r.id);
+      return `<div class="rshop-card${isPending ? ' rshop-pending' : ''}${!canAfford && !isPending ? ' rshop-locked' : ''}">
+        <div class="rshop-icon">${r.icon}</div>
+        <div class="rshop-name">${r.name}</div>
+        <div class="rshop-cost">🪙 ${r.cost} coins</div>
+        ${isPending
+          ? '<div class="rshop-status">⏳ Requested!</div>'
+          : canAfford
+            ? `<button class="rshop-btn" onclick="buyReward('${r.id}','${encodeURIComponent(r.name)}','${r.icon}',${r.cost})">Buy ✨</button>`
+            : `<div class="rshop-need">Need ${r.cost - (c2.coins || 0)} more 🪙</div>`
+        }
+      </div>`;
+    }).join('')}</div>
+    <div style="margin-top:14px;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:var(--r);font-size:.74rem;color:rgba(255,255,255,.3);line-height:1.5;">
+      💡 Buying a reward sends a request to your parent. They approve it in person!
+    </div>`;
 }
+
 
 window.buyReward = async function(rewardId, nameEnc, icon, cost) {
   const c = _HWT.childData;
@@ -1745,7 +1801,7 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 /* ═══ PARENT DASHBOARD ═══ */
 #s-parent{background:var(--bg);overflow-y:auto;}
 .p-layout{display:flex;min-height:100vh;}
-.sidebar{width:224px;flex-shrink:0;background:#111827;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;}
+.sidebar{width:224px;flex-shrink:0;background:#111827;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;transition:transform .28s cubic-bezier(.4,0,.2,1);}
 .sb-logo{padding:22px 20px 16px;font-family:var(--fd);font-size:1.25rem;font-weight:800;color:white;border-bottom:1px solid rgba(255,255,255,.06);}
 .sb-logo span{background:linear-gradient(135deg,#FFD93D,#FF6B6B);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
 .sb-who{padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.06);}
@@ -1759,7 +1815,115 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 .sb-foot{padding:10px 9px;border-top:1px solid rgba(255,255,255,.06);}
 .sb-foot button{width:100%;padding:8px;border-radius:9px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:rgba(255,255,255,.35);font-family:var(--ff);font-weight:600;font-size:.8rem;cursor:pointer;transition:all .18s;}
 .sb-foot button:hover{background:rgba(255,255,255,.07);color:white;}
-.p-main{flex:1;padding:28px 30px;overflow-y:auto;min-height:100vh;}
+
+/* ── MOBILE TOP BAR ── */
+.mob-topbar{
+  display:none;
+  align-items:center;justify-content:space-between;
+  padding:12px 18px;
+  background:#111827;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  position:sticky;top:0;z-index:200;flex-shrink:0;
+}
+.mob-topbar-logo{font-family:var(--fd);font-size:1.1rem;font-weight:800;color:white;}
+.mob-topbar-logo span{background:linear-gradient(135deg,#FFD93D,#FF6B6B);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.mob-hamburger{
+  width:36px;height:36px;border-radius:9px;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  cursor:pointer;
+}
+.mob-hamburger span{display:block;width:16px;height:2px;background:rgba(255,255,255,.7);border-radius:2px;transition:all .22s;}
+.mob-hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg);}
+.mob-hamburger.open span:nth-child(2){opacity:0;transform:scaleX(0);}
+.mob-hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg);}
+
+/* ── MOBILE DRAWER OVERLAY ── */
+.mob-drawer-overlay{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.55);z-index:190;
+  backdrop-filter:blur(3px);
+  opacity:0;transition:opacity .25s;
+}
+.mob-drawer-overlay.open{opacity:1;}
+
+/* ── MOBILE BOTTOM TAB BAR ── */
+.mob-bottom-nav{
+  display:none;
+  position:fixed;bottom:0;left:0;right:0;z-index:200;
+  background:#111827;
+  border-top:1px solid rgba(255,255,255,.08);
+  padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  gap:2px;
+}
+.mob-tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:6px 4px;border-radius:10px;border:none;background:none;
+  cursor:pointer;transition:background .15s;font-family:var(--ff);
+}
+.mob-tab:hover{background:rgba(255,255,255,.06);}
+.mob-tab.active{background:rgba(255,255,255,.09);}
+.mob-tab-icon{font-size:1.1rem;line-height:1;}
+.mob-tab-label{font-size:.58rem;font-weight:600;color:rgba(255,255,255,.4);letter-spacing:.02em;}
+.mob-tab.active .mob-tab-label{color:white;}
+
+/* ── FIREBASE SETUP GUIDE CARD ── */
+.setup-guide-card{
+  background:linear-gradient(135deg,#1e1b4b,#312e81);
+  border:1px solid rgba(139,92,246,.3);
+  border-radius:var(--r-lg);padding:20px 22px;
+  margin-bottom:16px;
+}
+.setup-guide-title{font-family:var(--fd);font-size:1rem;font-weight:700;color:white;margin-bottom:4px;display:flex;align-items:center;gap:8px;}
+.setup-guide-sub{font-size:.78rem;color:rgba(255,255,255,.55);margin-bottom:14px;line-height:1.5;}
+.setup-steps{display:flex;flex-direction:column;gap:8px;}
+.setup-step{display:flex;gap:12px;align-items:flex-start;}
+.setup-step-num{width:22px;height:22px;border-radius:50%;background:rgba(139,92,246,.4);border:1px solid rgba(139,92,246,.6);display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:800;color:#a78bfa;flex-shrink:0;margin-top:1px;}
+.setup-step-text{font-size:.78rem;color:rgba(255,255,255,.7);line-height:1.5;}
+.setup-step-text code{background:rgba(255,255,255,.1);border-radius:4px;padding:1px 5px;font-size:.72rem;color:#a78bfa;font-family:monospace;}
+.setup-step-text a{color:#818cf8;text-decoration:none;font-weight:600;}
+.setup-step-text a:hover{text-decoration:underline;}
+.setup-rules-box{
+  margin-top:12px;background:rgba(0,0,0,.35);border-radius:9px;
+  padding:10px 12px;font-family:monospace;font-size:.65rem;
+  color:rgba(255,255,255,.55);line-height:1.7;overflow-x:auto;
+  border:1px solid rgba(255,255,255,.08);position:relative;
+}
+.setup-copy-btn{
+  position:absolute;top:7px;right:7px;
+  background:rgba(139,92,246,.3);border:1px solid rgba(139,92,246,.5);
+  color:#a78bfa;border-radius:6px;padding:3px 9px;font-size:.65rem;font-weight:700;
+  cursor:pointer;font-family:var(--ff);transition:background .15s;
+}
+.setup-copy-btn:hover{background:rgba(139,92,246,.5);}
+.setup-guide-dismiss{
+  margin-top:12px;background:none;border:1px solid rgba(255,255,255,.12);
+  color:rgba(255,255,255,.3);border-radius:7px;padding:5px 12px;font-size:.72rem;
+  font-weight:600;cursor:pointer;font-family:var(--ff);transition:all .15s;
+}
+.setup-guide-dismiss:hover{border-color:rgba(255,255,255,.25);color:rgba(255,255,255,.55);}
+
+/* ── RESPONSIVE ── */
+@media(max-width:768px){
+  .sidebar{
+    position:fixed;left:0;top:0;bottom:0;z-index:195;
+    transform:translateX(-100%);
+    height:100%;
+  }
+  .sidebar.mob-open{transform:translateX(0);}
+  .mob-drawer-overlay{display:block;}
+  .mob-topbar{display:flex;}
+  .mob-bottom-nav{display:flex;}
+  .p-layout{flex-direction:column;}
+  .p-main{padding:16px 16px 80px;} /* bottom padding for tab bar */
+  .week-grid{grid-template-columns:repeat(4,1fr);}
+  .fg3{grid-template-columns:1fr 1fr;}
+}
+@media(max-width:480px){
+  .week-grid{grid-template-columns:1fr 1fr;}
+  .fg3{grid-template-columns:1fr;}
+  .stats-grid{grid-template-columns:1fr 1fr;}
+}
 .pg-title{font-family:var(--fd);font-size:1.75rem;font-weight:800;color:var(--dark);margin-bottom:3px;}
 .pg-sub{color:var(--mid);font-weight:500;font-size:.86rem;margin-bottom:22px;}
 .tab-panel{display:none;}
@@ -2058,6 +2222,8 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 .coin-adj-input{width:60px;padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;font-size:.82rem;font-weight:700;font-family:var(--ff);color:var(--dark);text-align:center;}
 .coin-adj-input:focus{outline:none;border-color:var(--blue);}
 .btn-xs{padding:5px 9px;font-size:.73rem;border-radius:7px;}
+.setup-check{display:flex;align-items:center;gap:10px;font-size:.85rem;color:var(--textmid);cursor:pointer;padding:4px 0;}
+.setup-check input{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;flex-shrink:0;}
 
 /* ═══ REWARD SHOP (game overlay) ═══ */
 .rshop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:4px;}
@@ -2464,19 +2630,36 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 
 <!-- ══════════ PARENT DASHBOARD ══════════ -->
 <div id="s-parent" class="screen">
+
+  <!-- Mobile top bar (hidden on desktop) -->
+  <div class="mob-topbar" id="mob-topbar">
+    <div class="mob-topbar-logo">🏘️ <span>HW Town</span></div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="font-size:.78rem;font-weight:600;color:rgba(255,255,255,.45);" id="mob-parent-name"></div>
+      <button class="mob-hamburger" id="mob-hamburger" onclick="toggleMobDrawer()">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Drawer backdrop -->
+  <div class="mob-drawer-overlay" id="mob-overlay" onclick="closeMobDrawer()"></div>
+
   <div class="p-layout">
-    <div class="sidebar">
+    <div class="sidebar" id="p-sidebar">
       <div class="sb-logo">🏘️ <span>HW Town</span></div>
       <div class="sb-who"><div class="sw-n" id="sb-name">Parent</div><div class="sw-r">Dashboard</div></div>
       <nav class="sb-nav">
-        <button class="nav-btn active" id="nb-overview" onclick="setTab('overview')"><div class="ni" style="background:rgba(59,130,246,.18);">📊</div>Overview</button>
-        <button class="nav-btn" id="nb-homework" onclick="setTab('homework')"><div class="ni" style="background:rgba(16,185,129,.18);">📚</div>Homework</button>
-        <button class="nav-btn" id="nb-bonus" onclick="setTab('bonus')"><div class="ni" style="background:rgba(245,158,11,.18);">⭐</div>Bonus Tasks</button>
-        <button class="nav-btn" id="nb-rewards" onclick="setTab('rewards')"><div class="ni" style="background:rgba(244,114,182,.18);">🎁</div>Rewards</button>
-        <button class="nav-btn" id="nb-children" onclick="setTab('children')"><div class="ni" style="background:rgba(139,92,246,.18);">👧</div>Children</button>
+        <button class="nav-btn active" id="nb-overview" onclick="setTab('overview');closeMobDrawer()"><div class="ni" style="background:rgba(59,130,246,.18);">📊</div>Overview</button>
+        <button class="nav-btn" id="nb-homework" onclick="setTab('homework');closeMobDrawer()"><div class="ni" style="background:rgba(16,185,129,.18);">📚</div>Homework</button>
+        <button class="nav-btn" id="nb-bonus" onclick="setTab('bonus');closeMobDrawer()"><div class="ni" style="background:rgba(245,158,11,.18);">⭐</div>Bonus Tasks</button>
+        <button class="nav-btn" id="nb-rewards" onclick="setTab('rewards');closeMobDrawer()"><div class="ni" style="background:rgba(244,114,182,.18);">🎁</div>Rewards</button>
+        <button class="nav-btn" id="nb-children" onclick="setTab('children');closeMobDrawer()"><div class="ni" style="background:rgba(139,92,246,.18);">👧</div>Children</button>
+        <button class="nav-btn" id="nb-setup" onclick="setTab('setup');closeMobDrawer()"><div class="ni" style="background:rgba(99,102,241,.18);">🔧</div>Setup Guide</button>
       </nav>
       <div class="sb-foot"><button onclick="parentLogout()">⬅ Sign Out</button></div>
     </div>
+
     <main class="p-main">
       <!-- OVERVIEW -->
       <div class="tab-panel active" id="tab-overview">
@@ -2596,8 +2779,133 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
           <div id="children-list"></div>
         </div>
       </div>
+
+      <!-- SETUP GUIDE -->
+      <div class="tab-panel" id="tab-setup">
+        <div class="pg-title">🔧 Setup Guide</div>
+        <div class="pg-sub">Get Homework Town fully working in a few steps.</div>
+
+        <!-- Firebase Rules Card -->
+        <div class="setup-guide-card">
+          <div class="setup-guide-title">🔒 Step 1 — Fix Firestore Security Rules</div>
+          <div class="setup-guide-sub">
+            Children log in without Firebase Auth, so your Firestore rules need to allow their reads. Without this the Reward Shop and some features won't load for kids.
+          </div>
+          <div class="setup-steps">
+            <div class="setup-step">
+              <div class="setup-step-num">1</div>
+              <div class="setup-step-text">Go to <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → select your <code>homeworktown</code> project</div>
+            </div>
+            <div class="setup-step">
+              <div class="setup-step-num">2</div>
+              <div class="setup-step-text">Click <strong style="color:white">Firestore Database</strong> in the left menu, then click the <strong style="color:white">Rules</strong> tab at the top</div>
+            </div>
+            <div class="setup-step">
+              <div class="setup-step-num">3</div>
+              <div class="setup-step-text">Replace everything in the editor with the rules below, then click <strong style="color:white">Publish</strong></div>
+            </div>
+          </div>
+          <div class="setup-rules-box" id="rules-box">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /parents/{uid} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == uid;
+    }
+
+    match /children/{childId} {
+      allow get, list: if true;
+      allow write: if request.auth != null
+        || resource == null;
+      allow update: if true;
+    }
+
+    match /homework/{docId} {
+      allow get, list: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /rewards/{docId} {
+      allow get, list: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null
+        && request.auth.uid == resource.data.parentId;
+    }
+
+    match /rewardPurchases/{docId} {
+      allow read: if request.auth != null;
+      allow create: if true;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    match /bonusTasks/{docId} {
+      allow get, list: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /taskProgress/{docId} {
+      allow read, write: if true;
+    }
+  }
+}</div>
+          <button class="setup-copy-btn" onclick="copyRules()">Copy</button>
+        </div>
+
+        <!-- Sync Rewards Card -->
+        <div class="card" style="border-left:3px solid var(--amber);">
+          <div class="card-head">
+            <div><div class="card-title">🎁 Step 2 — Sync Rewards to Children</div><div class="card-sub">Do this once after setting up rules, and whenever you add new rewards</div></div>
+          </div>
+          <p style="font-size:.84rem;color:var(--mid);margin-bottom:14px;line-height:1.6;">
+            The Reward Shop reads from a cached copy stored on each child's account. Press the button below to push your current rewards to all children. Adding new rewards from the Rewards tab does this automatically.
+          </p>
+          <button class="btn btn-primary" onclick="syncRewardsToChildren().then(()=>toast('✓ Rewards synced to all children!'))">↺ Sync Rewards to All Children Now</button>
+        </div>
+
+        <!-- Quick checklist -->
+        <div class="card">
+          <div class="card-head"><div class="card-title">✅ Quick Checklist</div></div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <label class="setup-check"><input type="checkbox"> Created my parent account</label>
+            <label class="setup-check"><input type="checkbox"> Added at least one child</label>
+            <label class="setup-check"><input type="checkbox"> Added homework tasks to the weekly schedule</label>
+            <label class="setup-check"><input type="checkbox"> Added at least one reward in the Rewards tab</label>
+            <label class="setup-check"><input type="checkbox"> Updated Firestore security rules (Step 1 above)</label>
+            <label class="setup-check"><input type="checkbox"> Synced rewards to children (Step 2 above)</label>
+            <label class="setup-check"><input type="checkbox"> Tested child login on the Play screen</label>
+          </div>
+        </div>
+      </div>
+
     </main>
   </div>
+
+  <!-- Mobile bottom tab bar -->
+  <nav class="mob-bottom-nav" id="mob-bottom-nav">
+    <button class="mob-tab active" id="mbt-overview" onclick="setTab('overview')">
+      <span class="mob-tab-icon">📊</span>
+      <span class="mob-tab-label">Overview</span>
+    </button>
+    <button class="mob-tab" id="mbt-homework" onclick="setTab('homework')">
+      <span class="mob-tab-icon">📚</span>
+      <span class="mob-tab-label">Homework</span>
+    </button>
+    <button class="mob-tab" id="mbt-rewards" onclick="setTab('rewards')">
+      <span class="mob-tab-icon">🎁</span>
+      <span class="mob-tab-label">Rewards</span>
+    </button>
+    <button class="mob-tab" id="mbt-children" onclick="setTab('children')">
+      <span class="mob-tab-icon">👧</span>
+      <span class="mob-tab-label">Children</span>
+    </button>
+    <button class="mob-tab" id="mbt-more" onclick="toggleMobDrawer()">
+      <span class="mob-tab-icon">⋯</span>
+      <span class="mob-tab-label">More</span>
+    </button>
+  </nav>
+
 </div>
 
 <!-- ══════════ CHILD ADDED SUCCESS ══════════ -->
