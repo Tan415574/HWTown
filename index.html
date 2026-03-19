@@ -421,15 +421,51 @@ function renderChildrenTab(kids) {
   if (!el) return;
   el.innerHTML = kids.length
     ? kids.map(c=>`
-      <div class="child-card">
+      <div class="child-card" style="flex-wrap:wrap;gap:10px;">
         <div class="child-av">${c.avatar}</div>
-        <div class="child-info">
+        <div class="child-info" style="flex:1;">
           <div class="child-name">${c.name} <span class="username-tag">@${c.username}</span></div>
-          <div class="child-meta">Age ${c.age} · ${c.coins||0} coins · Day ${c.day||1} · Pet: ${c.pet||'None'}</div>
+          <div class="child-meta">Age ${c.age} · <b id="coin-display-${c.id}">${c.coins||0}</b> coins · Day ${c.day||1} · Pet: ${c.pet||'None'}</div>
+        </div>
+        <div class="coin-adj-row">
+          <span class="coin-adj-label">🪙 Adjust Coins</span>
+          <div class="coin-adj-controls">
+            <input class="coin-adj-input" id="coin-adj-${c.id}" type="number" value="10" min="1" max="999" placeholder="amt">
+            <button class="btn btn-success btn-xs" onclick="adjustCoins('${c.id}',1)">＋ Add</button>
+            <button class="btn btn-danger btn-xs" onclick="adjustCoins('${c.id}',-1)">－ Remove</button>
+            <button class="btn btn-ghost btn-xs" onclick="setCoins('${c.id}')">Set</button>
+          </div>
         </div>
       </div>`).join('')
     : '<p class="empty-hint">No children yet.</p>';
 }
+
+window.adjustCoins = async function(childId, direction) {
+  const input = document.getElementById('coin-adj-'+childId);
+  const amount = parseInt(input?.value)||10;
+  try {
+    const snap = await getDoc(doc(db,'children',childId));
+    if (!snap.exists()) { toast('Child not found'); return; }
+    const current = snap.data().coins||0;
+    const next = Math.max(0, current + (direction * amount));
+    await updateDoc(doc(db,'children',childId), {coins:next});
+    const display = document.getElementById('coin-display-'+childId);
+    if (display) display.textContent = next;
+    toast(direction>0 ? `+${amount} coins added! 🪙` : `-${amount} coins removed`);
+  } catch(e) { toast('Error updating coins'); }
+};
+
+window.setCoins = async function(childId) {
+  const input = document.getElementById('coin-adj-'+childId);
+  const amount = parseInt(input?.value);
+  if (isNaN(amount) || amount < 0) { toast('Enter a valid number'); return; }
+  try {
+    await updateDoc(doc(db,'children',childId), {coins:amount});
+    const display = document.getElementById('coin-display-'+childId);
+    if (display) display.textContent = amount;
+    toast(`Coins set to ${amount} 🪙`);
+  } catch(e) { toast('Error updating coins'); }
+};
 
 /* ═══════════════════════════════════════
    GAME
@@ -449,6 +485,12 @@ const JOBS = [
    themes:{Reading:'Read Plant Guide',Maths:'Count the Harvest',Math:'Count the Harvest',Spelling:'Label the Seeds',Science:'Test the Soil',History:'Learn Old Ways',Art:'Paint Landscape'}},
   {id:'vet',       name:'Vet',       icon:'🩺', bg:'rgba(167,139,250,.18)',
    themes:{Reading:'Read Animal Files',Maths:'Calculate Doses',Math:'Calculate Doses',Spelling:'Fill the Chart',Science:'Run Tests',History:'Study History',Art:'Draw Anatomy'}},
+  {id:'marinebio', name:'Marine Biologist', icon:'🐬', bg:'rgba(14,165,233,.18)',
+   themes:{Reading:'Study Ocean Reports',Maths:'Measure the Tide',Math:'Measure the Tide',Spelling:'Label the Species',Science:'Analyse Coral Data',History:'Study Sea Explorers',Art:'Sketch Sea Creatures'}},
+  {id:'police',    name:'Police Officer',   icon:'👮', bg:'rgba(99,102,241,.18)',
+   themes:{Reading:'Read the Case Files',Maths:'Solve the Code',Math:'Solve the Code',Spelling:'Write the Report',Science:'Gather Evidence',History:'Study the Law',Art:'Sketch the Scene'}},
+  {id:'wildvet',   name:'Wildlife Vet',     icon:'🦁', bg:'rgba(251,146,60,.18)',
+   themes:{Reading:'Study Field Guides',Maths:'Weigh the Animals',Math:'Weigh the Animals',Spelling:'Tag the Wildlife',Science:'Run Health Tests',History:'Track Migration',Art:'Draw the Habitat'}},
 ];
 
 const SICONS = {Reading:'📖',Maths:'✏️',Math:'✏️',Spelling:'🔤',Science:'🔬',History:'📜',Art:'🎨',English:'📝'};
@@ -636,6 +678,24 @@ const JOB_THEMES = {
     panelBg:'linear-gradient(145deg,#001a1a,#001020)',
     panelTitle:'📋 Patient Files',
     panelSub:'Clinic is open, NAME! Work through each patient to complete your shift.',
+    wrapClass:'theme-vet',
+  },
+  marinebio: {
+    panelBg:'linear-gradient(145deg,#001a2e,#002a1a)',
+    panelTitle:'🐬 Ocean Research Log',
+    panelSub:'Dive in, NAME! Complete each study to log your discoveries.',
+    wrapClass:'theme-vet',
+  },
+  police: {
+    panelBg:'linear-gradient(145deg,#0a0a1a,#1a1a2a)',
+    panelTitle:'👮 Duty Roster',
+    panelSub:'On the beat, NAME! Work through each task to complete your shift.',
+    wrapClass:'theme-detective',
+  },
+  wildvet: {
+    panelBg:'linear-gradient(145deg,#1a0e00,#0a1a00)',
+    panelTitle:'🦁 Wildlife Clinic',
+    panelSub:'Into the wild, NAME! Treat each animal to complete your rounds.',
     wrapClass:'theme-vet',
   },
 };
@@ -1699,6 +1759,13 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 .burst{position:fixed;pointer-events:none;z-index:9999;font-family:var(--fd);font-size:1.05rem;font-weight:800;color:#FFD93D;text-shadow:0 0 10px rgba(255,217,61,.5);animation:burst .75s ease-out forwards;}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:rgba(10,16,30,.94);color:white;padding:9px 20px;border-radius:50px;font-weight:700;font-size:.83rem;z-index:10000;transition:transform .32s cubic-bezier(.34,1.2,.64,1);box-shadow:0 6px 24px rgba(0,0,0,.3);pointer-events:none;white-space:nowrap;border:1px solid rgba(255,255,255,.09);backdrop-filter:blur(10px);}
 .toast.show{transform:translateX(-50%) translateY(0);}
+/* Coin adjustment */
+.coin-adj-row{display:flex;flex-direction:column;gap:5px;align-items:flex-end;min-width:220px;}
+.coin-adj-label{font-size:.7rem;font-weight:700;color:var(--mid);text-transform:uppercase;letter-spacing:.04em;}
+.coin-adj-controls{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.coin-adj-input{width:60px;padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;font-size:.82rem;font-weight:700;font-family:var(--ff);color:var(--dark);text-align:center;}
+.coin-adj-input:focus{outline:none;border-color:var(--blue);}
+.btn-xs{padding:5px 9px;font-size:.73rem;border-radius:7px;}
 </style>
 </head>
 <body>
@@ -1830,7 +1897,7 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
   <div class="sp-features">
     <div class="sp-feat"><div class="sp-feat-icon" style="background:#EFF6FF;">🔒</div>Secure child logins</div>
     <div class="sp-feat"><div class="sp-feat-icon" style="background:#F0FDF4;">☁️</div>Saves to cloud</div>
-    <div class="sp-feat"><div class="sp-feat-icon" style="background:#FFFBEB;">🎯</div>7 job themes</div>
+    <div class="sp-feat"><div class="sp-feat-icon" style="background:#FFFBEB;">🎯</div>10 job themes</div>
     <div class="sp-feat"><div class="sp-feat-icon" style="background:#FDF4FF;">🏠</div>Virtual house & pets</div>
     <div class="sp-feat"><div class="sp-feat-icon" style="background:#FFF1F2;">🆓</div>Free to use</div>
   </div>
