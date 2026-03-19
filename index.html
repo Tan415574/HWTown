@@ -398,7 +398,77 @@ async function renderRewardsTab() {
         <button class="reward-del" onclick="removeReward('${r.id}')">×</button>
       </div>`).join('')}</div>`
     : '<p class="empty-hint" style="margin-bottom:12px;">No rewards yet.</p>';
+
+  // Also render purchased/pending reward requests
+  await renderRewardRequests();
 }
+
+async function renderRewardRequests() {
+  const el = document.getElementById('reward-requests');
+  if (!el) return;
+  const q = query(collection(db,'rewardPurchases'), where('parentId','==',_HWT.user.uid));
+  const s = await getDocs(q);
+  const requests = s.docs.map(d=>({id:d.id,...d.data()}))
+    .sort((a,b)=> (b.purchasedAt?.seconds||0)-(a.purchasedAt?.seconds||0));
+
+  if (!requests.length) {
+    el.innerHTML = '<p class="empty-hint">No reward requests yet — children can buy rewards in the game\'s Reward Shop.</p>';
+    return;
+  }
+
+  const pending  = requests.filter(r=>r.status==='pending');
+  const approved = requests.filter(r=>r.status==='approved');
+
+  el.innerHTML = `
+    ${pending.length ? `
+      <div style="font-weight:700;font-size:.78rem;color:var(--amber2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:9px;">⏳ Pending Approval (${pending.length})</div>
+      ${pending.map(r=>`
+        <div class="rreq-card rreq-pending">
+          <div class="rreq-icon">${r.rewardIcon}</div>
+          <div class="rreq-info">
+            <div class="rreq-name">${r.rewardName}</div>
+            <div class="rreq-meta">${r.childName} · 🪙 ${r.cost} coins</div>
+          </div>
+          <div class="rreq-actions">
+            <button class="btn btn-success btn-sm" onclick="approveReward('${r.id}')">✓ Approve</button>
+            <button class="btn btn-ghost btn-sm" onclick="denyReward('${r.id}')">✕</button>
+          </div>
+        </div>`).join('')}
+      <div style="margin-bottom:16px;"></div>` : ''}
+    ${approved.length ? `
+      <div style="font-weight:700;font-size:.78rem;color:var(--green);text-transform:uppercase;letter-spacing:.05em;margin-bottom:9px;">✅ Approved</div>
+      ${approved.map(r=>`
+        <div class="rreq-card rreq-approved">
+          <div class="rreq-icon">${r.rewardIcon}</div>
+          <div class="rreq-info">
+            <div class="rreq-name">${r.rewardName}</div>
+            <div class="rreq-meta">${r.childName} · 🪙 ${r.cost} coins</div>
+          </div>
+          <div class="rreq-done">Given ✓</div>
+        </div>`).join('')}` : ''}
+  `;
+}
+
+window.approveReward = async function(id) {
+  await updateDoc(doc(db,'rewardPurchases',id), {status:'approved'});
+  toast('Reward approved! 🎉');
+  await renderRewardRequests();
+};
+
+window.denyReward = async function(id) {
+  // Refund the child's coins
+  const snap = await getDoc(doc(db,'rewardPurchases',id));
+  if (snap.exists()) {
+    const {childId, cost} = snap.data();
+    const cSnap = await getDoc(doc(db,'children',childId));
+    if (cSnap.exists()) {
+      await updateDoc(doc(db,'children',childId), {coins:(cSnap.data().coins||0)+cost});
+    }
+  }
+  await deleteDoc(doc(db,'rewardPurchases',id));
+  toast('Request declined — coins refunded.');
+  await renderRewardRequests();
+};
 
 window.addReward = async function() {
   const name = v('rw-name').trim();
@@ -408,13 +478,27 @@ window.addReward = async function() {
   await addDoc(collection(db,'rewards'), {parentId:_HWT.user.uid, name, icon, cost});
   document.getElementById('rw-name').value = '';
   await renderRewardsTab();
+  await syncRewardsToChildren();
   toast(`"${name}" added! 🎁`);
 };
 
 window.removeReward = async function(id) {
   await deleteDoc(doc(db,'rewards',id));
   await renderRewardsTab();
+  await syncRewardsToChildren();
 };
+
+// Push a plain copy of rewards into each child's doc so unauthenticated reads work
+async function syncRewardsToChildren() {
+  try {
+    const rwSnap = await getDocs(query(collection(db,'rewards'), where('parentId','==',_HWT.user.uid)));
+    const rewardList = rwSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const kidsSnap = await getDocs(query(collection(db,'children'), where('parentId','==',_HWT.user.uid)));
+    await Promise.all(kidsSnap.docs.map(child=>
+      updateDoc(doc(db,'children',child.id), {cachedRewards: rewardList})
+    ));
+  } catch(e) { console.warn('syncRewardsToChildren failed:', e.message); }
+}
 
 function renderChildrenTab(kids) {
   const el = document.getElementById('children-list');
@@ -525,12 +609,17 @@ async function launchGame() {
   _HWT.todayBonus = c.todayDone || false;
   _HWT.tasks = [];
   updateHUD();
-  // Live listener for coin updates
+  // Live listener for coin updates + cachedRewards sync
   const unsub = onSnapshot(doc(db,'children',c.id), snap => {
     if (snap.exists()) { _HWT.childData = {id:snap.id,...snap.data()}; updateHUD(); }
   });
   _HWT.unsubs.push(unsub);
   toast('Welcome back, ' + c.name + '! 🏘️');
+
+  // Start dynamic sky
+  applySkyPhase();
+  const skyTimer = setInterval(applySkyPhase, 60000);
+  _HWT.unsubs.push(() => clearInterval(skyTimer));
 }
 
 function updateHUD() {
@@ -542,6 +631,85 @@ function updateHUD() {
   document.getElementById('g-day').textContent    = 'Day '+(c.day||1);
   const job = JOBS.find(j=>j.id===_HWT.job);
   document.getElementById('g-badge').textContent  = job ? job.icon+' '+job.name+' today' : 'Visit the Job Board!';
+}
+
+/* ═══════════════════════════════════════
+   DYNAMIC SKY — changes with real time
+═══════════════════════════════════════ */
+function applySkyPhase() {
+  const h = new Date().getHours();
+  const m = new Date().getMinutes();
+  const t = h + m / 60; // decimal hour e.g. 14.5 = 2:30pm
+
+  // Sky phases: [startHour, label, skyTop, skyMid, skyBot, gameScreenBg, starsOpacity, showSun, sunX, sunY, showMoon, hudBg, groundCol, ground2Col]
+  const phases = [
+    // Night           0–4
+    { from:0,  to:4,   top:'#020810', mid:'#030d1a', bot:'#04100a', bg:'radial-gradient(ellipse at 30% 20%,#020810,#030d1a 50%,#04100a)', stars:'.7',  sun:0, sx:100,sy:400, moon:.9, hud:'rgba(2,8,16,.9)',  gnd:'#020803', g2:'#06080f' },
+    // Dawn            4–6
+    { from:4,  to:6,   top:'#1a0a2e', mid:'#3d1a6e', bot:'#0a200a', bg:'radial-gradient(ellipse at 15% 30%,#3d1a6e,#1a0a2e 40%,#0a200a)', stars:'.3',  sun:.4,sx:80, sy:140,moon:.2, hud:'rgba(26,10,46,.85)', gnd:'#060410', g2:'#10081a' },
+    // Sunrise         6–7
+    { from:6,  to:7,   top:'#ff6b1a', mid:'#ffaa44', bot:'#1a3a0a', bg:'radial-gradient(ellipse at 10% 25%,#ffaa44,#ff6b1a 35%,#1a3a0a)', stars:'.05', sun:.9,sx:80, sy:100,moon:0,  hud:'rgba(60,20,0,.85)',  gnd:'#0f2005', g2:'#1a100a' },
+    // Morning         7–11
+    { from:7,  to:11,  top:'#2280d0', mid:'#5ab0f0', bot:'#1a5a0a', bg:'radial-gradient(ellipse at 20% 10%,#87ceeb,#2280d0 40%,#2a7a1a)', stars:'0',   sun:1, sx:200,sy:60, moon:0,  hud:'rgba(10,60,120,.8)', gnd:'#1a4010', g2:'#0e3018' },
+    // Midday          11–14
+    { from:11, to:14,  top:'#0d8ae8', mid:'#4dc0ff', bot:'#1a6a0a', bg:'radial-gradient(ellipse at 50% 0%,#87ceeb,#0d8ae8 40%,#2a8a1a)',  stars:'0',   sun:1, sx:450,sy:40, moon:0,  hud:'rgba(5,70,130,.8)',  gnd:'#1a5010', g2:'#0e3820' },
+    // Afternoon       14–17
+    { from:14, to:17,  top:'#1070c0', mid:'#40a0e0', bot:'#1a6010', bg:'radial-gradient(ellipse at 70% 10%,#87ceeb,#1070c0 45%,#1a6010)', stars:'0',   sun:.9,sx:700,sy:60, moon:0,  hud:'rgba(8,50,110,.8)',  gnd:'#165010', g2:'#0e2e18' },
+    // Sunset          17–19
+    { from:17, to:19,  top:'#c03010', mid:'#f08020', bot:'#0a2808', bg:'radial-gradient(ellipse at 80% 25%,#f08020,#c03010 35%,#0a2808)', stars:'.05', sun:.8,sx:800,sy:100,moon:.1, hud:'rgba(50,10,0,.85)',  gnd:'#081505', g2:'#140c08' },
+    // Dusk            19–21
+    { from:19, to:21,  top:'#1a0828', mid:'#2d1050', bot:'#080f04', bg:'radial-gradient(ellipse at 75% 30%,#2d1050,#1a0828 40%,#080f04)', stars:'.3',  sun:.1,sx:820,sy:200,moon:.5, hud:'rgba(20,6,36,.88)',  gnd:'#040a03', g2:'#0d0818' },
+    // Evening         21–24
+    { from:21, to:24,  top:'#020810', mid:'#030d1a', bot:'#04100a', bg:'radial-gradient(ellipse at 30% 20%,#020810,#030d1a 50%,#04100a)', stars:'.7',  sun:0, sx:100,sy:400, moon:.9, hud:'rgba(2,8,16,.9)',  gnd:'#020803', g2:'#06080f' },
+  ];
+
+  const phase = phases.find(p => t >= p.from && t < p.to) || phases[0];
+
+  // Update CSS background on game screen
+  document.getElementById('s-game').style.background = phase.bg;
+
+  // Update SVG gradient stops
+  const skyTop = document.getElementById('sky-top');
+  const skyMid = document.getElementById('sky-mid');
+  const skyBot = document.getElementById('sky-bot');
+  if (skyTop) skyTop.setAttribute('stop-color', phase.top);
+  if (skyMid) skyMid.setAttribute('stop-color', phase.mid);
+  if (skyBot) skyBot.setAttribute('stop-color', phase.bot);
+
+  // Stars
+  const stars = document.getElementById('sky-stars');
+  if (stars) stars.setAttribute('opacity', phase.stars);
+
+  // Sun
+  const sun = document.getElementById('sky-sun');
+  if (sun) {
+    sun.setAttribute('opacity', phase.sun);
+    sun.setAttribute('cx', phase.sx);
+    sun.setAttribute('cy', phase.sy);
+  }
+
+  // Moon
+  const moon = document.getElementById('sky-moon');
+  const moonMask = document.getElementById('sky-moon-mask');
+  if (moon) moon.setAttribute('opacity', phase.moon);
+  if (moonMask) moonMask.setAttribute('fill', phase.top);
+
+  // HUD bar
+  const hud = document.querySelector('.game-hud');
+  if (hud) hud.style.background = phase.hud;
+
+  // Ground
+  const gnd = document.getElementById('sky-ground');
+  const gnd2 = document.getElementById('sky-ground2');
+  if (gnd) gnd.setAttribute('fill', phase.gnd);
+  if (gnd2) gnd2.setAttribute('fill', phase.g2);
+
+  // Show time label in HUD
+  const timeLabel = document.getElementById('g-day');
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false});
+  const dayNum = _HWT.childData?.day || 1;
+  if (timeLabel) timeLabel.textContent = `Day ${dayNum} · ${timeStr}`;
 }
 
 async function saveChild(fields) {
@@ -557,10 +725,11 @@ async function addCoins(n) {
 /* overlays */
 window.openPanel = function(name) {
   if (name==='tasks' && !_HWT.job) { openPanel('jobs'); return; }
-  if (name==='jobs')   buildJobGrid();
-  if (name==='tasks')  buildTasksPanel();
-  if (name==='house')  buildHousePanel();
-  if (name==='pet')    buildPetPanel();
+  if (name==='jobs')        buildJobGrid();
+  if (name==='tasks')       buildTasksPanel();
+  if (name==='house')       buildHousePanel();
+  if (name==='pet')         buildPetPanel();
+  if (name==='rewardshop')  buildRewardShopPanel();
   document.getElementById('ov-'+name)?.classList.add('open');
 };
 window.closePanel = function(name) {
@@ -1095,6 +1264,115 @@ window.giveTreat = async function(cost,happy) {
   toast('Your pet loved that! ❤️');
 };
 
+/* ═══════════════════════════════════════
+   REWARD SHOP (child buys parent rewards)
+═══════════════════════════════════════ */
+async function buildRewardShopPanel() {
+  const c = _HWT.childData;
+  document.getElementById('rshop-coins').textContent = c.coins||0;
+  const el = document.getElementById('rshop-content');
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,.35);font-size:.85rem;">Loading rewards…</div>';
+
+  try {
+    // PRIMARY: use cachedRewards stored on the child doc — no auth needed
+    let rewards = Array.isArray(c.cachedRewards) ? c.cachedRewards : [];
+
+    // FALLBACK: try direct Firestore query (works if rules allow it)
+    if (!rewards.length && c.parentId) {
+      try {
+        const rwSnap = await getDocs(
+          query(collection(db, 'rewards'), where('parentId', '==', c.parentId))
+        );
+        rewards = rwSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch(e2) {
+        console.warn('Direct rewards query failed (likely permissions):', e2.message);
+      }
+    }
+
+    // Fetch this child's purchase history (reads own doc — always allowed)
+    let pendingIds = new Set();
+    try {
+      const purchSnap = await getDocs(
+        query(collection(db, 'rewardPurchases'), where('childId', '==', c.id))
+      );
+      pendingIds = new Set(
+        purchSnap.docs.filter(d => d.data().status === 'pending').map(d => d.data().rewardId)
+      );
+    } catch(e3) {
+      console.warn('Purchase history query failed:', e3.message);
+    }
+
+    if (!rewards.length) {
+      el.innerHTML = `<div style="text-align:center;padding:28px;">
+        <div style="font-size:2.5rem;margin-bottom:12px;">🎁</div>
+        <div style="color:rgba(255,255,255,.55);font-size:.86rem;line-height:1.7;">
+          No rewards set yet!<br>Ask your parent to add some in their dashboard.<br>
+          <span style="font-size:.72rem;color:rgba(255,255,255,.25);">They may need to save rewards again to sync them here.</span>
+        </div>
+      </div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div class="rshop-grid">${rewards.map(r => {
+        const canAfford = (c.coins || 0) >= r.cost;
+        const isPending = pendingIds.has(r.id);
+        return `<div class="rshop-card${isPending ? ' rshop-pending' : ''}${!canAfford && !isPending ? ' rshop-locked' : ''}">
+          <div class="rshop-icon">${r.icon}</div>
+          <div class="rshop-name">${r.name}</div>
+          <div class="rshop-cost">🪙 ${r.cost} coins</div>
+          ${isPending
+            ? '<div class="rshop-status">⏳ Requested!</div>'
+            : canAfford
+              ? `<button class="rshop-btn" onclick="buyReward('${r.id}','${encodeURIComponent(r.name)}','${r.icon}',${r.cost})">Buy ✨</button>`
+              : `<div class="rshop-need">Need ${r.cost - (c.coins || 0)} more 🪙</div>`
+          }
+        </div>`;
+      }).join('')}</div>
+      <div style="margin-top:14px;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:var(--r);font-size:.74rem;color:rgba(255,255,255,.3);line-height:1.5;">
+        💡 Buying a reward sends a request to your parent. They approve it in person!
+      </div>`;
+
+  } catch(e) {
+    console.error('Reward shop error:', e);
+    el.innerHTML = `<div style="padding:14px;background:rgba(255,50,50,.08);border-radius:var(--r);border:1px solid rgba(255,50,50,.2);">
+      <div style="color:rgba(255,120,120,.9);font-size:.82rem;font-weight:700;margin-bottom:6px;">Could not load rewards</div>
+      <div style="color:rgba(255,255,255,.3);font-size:.72rem;line-height:1.5;">${e.message || 'Unknown error'}</div>
+      <button onclick="buildRewardShopPanel()" style="margin-top:10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:white;border-radius:50px;padding:6px 14px;font-size:.74rem;font-weight:600;cursor:pointer;font-family:var(--ff);">↺ Try again</button>
+    </div>`;
+  }
+}
+
+window.buyReward = async function(rewardId, nameEnc, icon, cost) {
+  const c = _HWT.childData;
+  if ((c.coins||0) < cost) { toast('Not enough coins!'); return; }
+  try {
+    // Deduct coins
+    await addCoins(-cost);
+    // Write purchase request to Firestore
+    await addDoc(collection(db,'rewardPurchases'), {
+      rewardId,
+      childId: c.id,
+      childName: c.name,
+      parentId: c.parentId,
+      rewardName: decodeURIComponent(nameEnc),
+      rewardIcon: icon,
+      cost,
+      status: 'pending',
+      purchasedAt: serverTimestamp()
+    });
+    burst(icon+' Requested!');
+    toast(icon+' "'+decodeURIComponent(nameEnc)+'" requested! Wait for parent approval 🎉');
+    // Refresh the panel
+    buildRewardShopPanel();
+  } catch(e) {
+    console.error(e);
+    toast('Something went wrong. Try again!');
+    // Refund coins if purchase record failed
+    await addCoins(cost);
+  }
+};
+
 /* utils */
 function stopTimers() { Object.values(_HWT.timers).forEach(clearInterval); _HWT.timers={}; }
 function clearUnsubs() { _HWT.unsubs.forEach(fn=>fn()); _HWT.unsubs=[]; }
@@ -1549,6 +1827,7 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 #s-game{
   background:radial-gradient(ellipse at 30% 20%,#0d1f35 0%,#07101f 45%,#0a1f10 70%,#050f06 100%);
   overflow:hidden;
+  transition:background 90s linear;
 }
 .particle{position:absolute;border-radius:50%;pointer-events:none;animation:pdrift var(--dur,8s) ease-in-out infinite var(--del,0s);}
 @keyframes pdrift{0%,100%{transform:translate(0,0);opacity:.25;}50%{transform:translate(var(--tx,20px),var(--ty,-30px));opacity:.6;}}
@@ -1779,6 +2058,35 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
 .coin-adj-input{width:60px;padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;font-size:.82rem;font-weight:700;font-family:var(--ff);color:var(--dark);text-align:center;}
 .coin-adj-input:focus{outline:none;border-color:var(--blue);}
 .btn-xs{padding:5px 9px;font-size:.73rem;border-radius:7px;}
+
+/* ═══ REWARD SHOP (game overlay) ═══ */
+.rshop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:4px;}
+.rshop-card{
+  background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.1);
+  border-radius:var(--r-lg);padding:16px 12px;text-align:center;
+  transition:all .2s;display:flex;flex-direction:column;align-items:center;gap:6px;
+}
+.rshop-card:hover{background:rgba(255,255,255,.1);transform:translateY(-2px);}
+.rshop-pending{border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.06);}
+.rshop-locked{opacity:.5;}
+.rshop-icon{font-size:2rem;line-height:1;}
+.rshop-name{font-weight:700;font-size:.82rem;color:white;line-height:1.3;}
+.rshop-cost{font-size:.72rem;font-weight:700;color:#FFD93D;background:rgba(255,217,61,.1);border:1px solid rgba(255,217,61,.18);border-radius:50px;padding:2px 9px;}
+.rshop-btn{background:linear-gradient(135deg,#A855F7,#7C3AED);color:white;border:none;border-radius:50px;padding:6px 16px;font-size:.74rem;font-weight:700;cursor:pointer;font-family:var(--ff);transition:transform .12s,box-shadow .12s;box-shadow:0 3px 10px rgba(124,58,237,.3);}
+.rshop-btn:hover{transform:translateY(-1px);box-shadow:0 5px 16px rgba(124,58,237,.4);}
+.rshop-status{font-size:.72rem;font-weight:700;color:#F59E0B;background:rgba(245,158,11,.12);border-radius:50px;padding:4px 10px;}
+.rshop-need{font-size:.68rem;color:rgba(255,255,255,.3);font-weight:600;}
+
+/* ═══ REWARD REQUESTS (parent dashboard) ═══ */
+.rreq-card{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--r-lg);margin-bottom:8px;border:1.5px solid transparent;}
+.rreq-pending{background:#FFFBEB;border-color:#FDE68A;}
+.rreq-approved{background:#F0FDF4;border-color:#BBF7D0;}
+.rreq-icon{font-size:1.6rem;flex-shrink:0;width:42px;text-align:center;}
+.rreq-info{flex:1;}
+.rreq-name{font-weight:700;font-size:.88rem;color:var(--dark);}
+.rreq-meta{font-size:.74rem;color:var(--mid);margin-top:2px;}
+.rreq-actions{display:flex;gap:6px;flex-shrink:0;}
+.rreq-done{font-size:.76rem;font-weight:700;color:var(--green);background:rgba(16,185,129,.1);border-radius:50px;padding:4px 12px;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -2246,8 +2554,19 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
       <div class="tab-panel" id="tab-rewards">
         <div class="pg-title">Reward Store</div>
         <div class="pg-sub">Set real-world rewards children can buy with their coins.</div>
+        <!-- Pending requests card -->
+        <div class="card" style="border-color:var(--amber);background:linear-gradient(135deg,#FFFBEB,#fff);">
+          <div class="card-head">
+            <div><div class="card-title">🎁 Reward Requests</div><div class="card-sub">Children request rewards from the in-game Reward Shop</div></div>
+          </div>
+          <div id="reward-requests"></div>
+        </div>
+        <!-- Available rewards card -->
         <div class="card">
-          <div class="card-head"><div class="card-title">Rewards</div><div class="card-sub">Children see and request these in-game</div></div>
+          <div class="card-head">
+            <div><div class="card-title">Available Rewards</div><div class="card-sub">Children see and buy these in-game</div></div>
+            <button class="btn btn-ghost btn-sm" onclick="syncRewardsToChildren().then(()=>toast('Rewards synced to all children ✓'))">↺ Sync to kids</button>
+          </div>
           <div id="reward-list"></div>
           <div class="add-form">
             <h4>+ Add a Reward</h4>
@@ -2348,20 +2667,29 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
     <svg viewBox="0 0 900 500" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <filter id="glow"><feGaussianBlur stdDeviation="3" result="cb"/><feMerge><feMergeNode in="cb"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <linearGradient id="sky-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop id="sky-top" offset="0%" stop-color="#0d1f35"/>
+          <stop id="sky-mid" offset="55%" stop-color="#07101f"/>
+          <stop id="sky-bot" offset="100%" stop-color="#0a1f10"/>
+        </linearGradient>
       </defs>
+      <!-- Sky background -->
+      <rect x="0" y="0" width="900" height="390" fill="url(#sky-grad)" id="sky-rect"/>
       <!-- Stars -->
-      <g fill="white" opacity=".42">
+      <g id="sky-stars" fill="white" opacity=".42">
         <circle cx="60" cy="30" r="1.2"/><circle cx="140" cy="15" r="1"/><circle cx="240" cy="45" r="1.4"/>
         <circle cx="320" cy="20" r="1"/><circle cx="420" cy="38" r="1.3"/><circle cx="520" cy="12" r="1"/>
         <circle cx="610" cy="42" r="1.4"/><circle cx="710" cy="18" r="1"/><circle cx="800" cy="35" r="1.3"/>
         <circle cx="860" cy="8" r="1"/><circle cx="180" cy="65" r="1"/><circle cx="470" cy="65" r="1"/>
       </g>
       <!-- Moon -->
-      <circle cx="830" cy="58" r="32" fill="#FFF9C4" opacity=".82" filter="url(#glow)"/>
-      <circle cx="843" cy="50" r="24" fill="#0d1f35"/>
+      <circle id="sky-moon" cx="830" cy="58" r="32" fill="#FFF9C4" opacity=".82" filter="url(#glow)"/>
+      <circle id="sky-moon-mask" cx="843" cy="50" r="24" fill="#0d1f35"/>
+      <!-- Sun -->
+      <circle id="sky-sun" cx="100" cy="60" r="28" fill="#FFE566" opacity="0" filter="url(#glow)"/>
       <!-- Ground -->
-      <rect x="0" y="390" width="900" height="110" fill="#050f06"/>
-      <rect x="0" y="388" width="900" height="30" fill="#0f0f18"/>
+      <rect id="sky-ground" x="0" y="390" width="900" height="110" fill="#050f06"/>
+      <rect id="sky-ground2" x="0" y="388" width="900" height="30" fill="#0f0f18"/>
       <g fill="#FFD700" opacity=".28">
         <rect x="0" y="400" width="40" height="3" rx="1.5"/><rect x="70" y="400" width="40" height="3" rx="1.5"/>
         <rect x="140" y="400" width="40" height="3" rx="1.5"/><rect x="210" y="400" width="40" height="3" rx="1.5"/>
@@ -2466,6 +2794,46 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
         <ellipse cx="670" cy="393" rx="13" ry="9"/><ellipse cx="658" cy="391" rx="11" ry="8"/>
         <ellipse cx="840" cy="393" rx="13" ry="9"/><ellipse cx="852" cy="391" rx="11" ry="8"/>
       </g>
+
+      <!-- ══ REWARD SHOP ══ -->
+      <g class="g-bldg" onclick="openPanel('rewardshop')">
+        <!-- Shadow -->
+        <ellipse cx="845" cy="392" rx="50" ry="6" fill="rgba(0,0,0,.3)"/>
+        <!-- Main building body -->
+        <rect x="798" y="268" width="96" height="122" rx="3" fill="#4a1060"/>
+        <rect x="803" y="273" width="86" height="113" rx="2" fill="#5e1878"/>
+        <!-- Roof -->
+        <polygon points="786,270 845,218 904,270" fill="#320840"/>
+        <polygon points="793,270 845,224 897,270" fill="#3d0f50"/>
+        <!-- Roof peak decoration -->
+        <rect x="833" y="220" width="24" height="36" rx="2" fill="#320840"/>
+        <polygon points="828,222 845,202 862,222" fill="#28063a"/>
+        <!-- Star on roof peak -->
+        <text x="845" y="216" text-anchor="middle" font-size="11" fill="#FFD93D" filter="url(#glow)">⭐</text>
+        <!-- Windows -->
+        <rect x="808" y="290" width="26" height="22" rx="3" fill="#FFE566" opacity=".45"/>
+        <rect x="808" y="290" width="26" height="22" rx="3" fill="none" stroke="#320840" stroke-width="1.5"/>
+        <line x1="821" y1="290" x2="821" y2="312" stroke="#320840" stroke-width="1.2"/>
+        <line x1="808" y1="301" x2="834" y2="301" stroke="#320840" stroke-width="1.2"/>
+        <rect x="858" y="290" width="26" height="22" rx="3" fill="#FFE566" opacity=".45"/>
+        <rect x="858" y="290" width="26" height="22" rx="3" fill="none" stroke="#320840" stroke-width="1.5"/>
+        <line x1="871" y1="290" x2="871" y2="312" stroke="#320840" stroke-width="1.2"/>
+        <line x1="858" y1="301" x2="884" y2="301" stroke="#320840" stroke-width="1.2"/>
+        <!-- Shop display window -->
+        <rect x="810" y="322" width="72" height="38" rx="4" fill="#FFE566" opacity=".18"/>
+        <rect x="810" y="322" width="72" height="38" rx="4" fill="none" stroke="#320840" stroke-width="1.5"/>
+        <text x="846" y="346" text-anchor="middle" font-size="16">🎁</text>
+        <!-- Door -->
+        <rect x="830" y="352" width="30" height="38" rx="4" fill="#28063a"/>
+        <circle cx="857" cy="371" r="2.5" fill="#FFD700"/>
+        <!-- Sign banner -->
+        <rect x="805" y="258" width="80" height="16" rx="4" fill="#FFD93D" opacity=".92"/>
+        <text x="845" y="270" text-anchor="middle" font-family="Baloo 2,cursive" font-size="8.5" font-weight="800" fill="#4a1060">REWARD SHOP</text>
+        <!-- Ground strip -->
+        <rect x="820" y="388" width="50" height="5" rx="2" fill="#320840"/>
+        <!-- Tap hint -->
+        <text x="845" y="210" text-anchor="middle" font-size="11" fill="#FFD93D" opacity=".7" filter="url(#glow)">▼ tap</text>
+      </g>
       <text x="450" y="460" text-anchor="middle" font-family="Plus Jakarta Sans,sans-serif" font-size="12" fill="rgba(255,255,255,.18)" font-weight="600">Tap a building to explore your town</text>
     </svg>
   </div>
@@ -2523,6 +2891,19 @@ html,body{width:100%;height:100%;font-family:var(--ff);background:var(--dark);ov
       <div class="g-ptitle">🐾 Pet Store</div>
       <div class="g-psub" id="pet-sub">Adopt a companion!</div>
       <div id="pet-content"></div>
+    </div>
+  </div>
+
+  <!-- ── REWARD SHOP OVERLAY ── -->
+  <div class="overlay" id="ov-rewardshop">
+    <div class="g-panel" style="max-width:520px;">
+      <button class="g-close" onclick="closePanel('rewardshop')">✕</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+        <div class="g-ptitle">🎁 Reward Shop</div>
+        <div class="coin-badge"><div class="coin-glow">$</div><span class="coin-num" id="rshop-coins">0</span></div>
+      </div>
+      <div class="g-psub">Spend your coins on real rewards set by your parent!</div>
+      <div id="rshop-content"></div>
     </div>
   </div>
 
